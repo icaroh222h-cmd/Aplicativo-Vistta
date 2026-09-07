@@ -1,22 +1,23 @@
-import React, { useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { AppProvider, useAppContext } from './context/AppContext';
 import { Sidebar } from './components/Navigation/Sidebar';
 
-import { AuthScreen } from './screens/AuthScreen';
-import { DashboardScreen } from './screens/DashboardScreen';
-import { PdvScreen } from './screens/PdvScreen';
-import { CaixaScreen } from './screens/CaixaScreen';
-import { EstoqueScreen } from './screens/EstoqueScreen';
-import { ClientesScreen } from './screens/ClientesScreen';
-import { OrcamentosScreen } from './screens/OrcamentosScreen';
-import { FinanceiroScreen } from './screens/FinanceiroScreen';
-import { CadastrosGenericosScreen } from './screens/CadastrosGenericosScreen';
-import { OrdensServicoScreen } from './screens/OrdensServicoScreen';
-import { HelpScreen } from './screens/HelpScreen';
-import { SetupOticaScreen } from './screens/SetupOticaScreen';
-import { PlatformAdminScreen } from './screens/PlatformAdminScreen';
 import { Home, ShoppingCart, Boxes, Users, Menu, Moon, Sun, LogOut } from 'lucide-react';
 import { LogoVistta } from './components/SharedUI';
+
+const AuthScreen = lazy(() => import('./screens/AuthScreen').then(module => ({ default: module.AuthScreen })));
+const DashboardScreen = lazy(() => import('./screens/DashboardScreen').then(module => ({ default: module.DashboardScreen })));
+const PdvScreen = lazy(() => import('./screens/PdvScreen').then(module => ({ default: module.PdvScreen })));
+const CaixaScreen = lazy(() => import('./screens/CaixaScreen').then(module => ({ default: module.CaixaScreen })));
+const EstoqueScreen = lazy(() => import('./screens/EstoqueScreen').then(module => ({ default: module.EstoqueScreen })));
+const ClientesScreen = lazy(() => import('./screens/ClientesScreen').then(module => ({ default: module.ClientesScreen })));
+const OrcamentosScreen = lazy(() => import('./screens/OrcamentosScreen').then(module => ({ default: module.OrcamentosScreen })));
+const FinanceiroScreen = lazy(() => import('./screens/FinanceiroScreen').then(module => ({ default: module.FinanceiroScreen })));
+const CadastrosGenericosScreen = lazy(() => import('./screens/CadastrosGenericosScreen').then(module => ({ default: module.CadastrosGenericosScreen })));
+const OrdensServicoScreen = lazy(() => import('./screens/OrdensServicoScreen').then(module => ({ default: module.OrdensServicoScreen })));
+const HelpScreen = lazy(() => import('./screens/HelpScreen').then(module => ({ default: module.HelpScreen })));
+const SetupOticaScreen = lazy(() => import('./screens/SetupOticaScreen').then(module => ({ default: module.SetupOticaScreen })));
+const PlatformAdminScreen = lazy(() => import('./screens/PlatformAdminScreen').then(module => ({ default: module.PlatformAdminScreen })));
 
 function MainLayout() {
   const { activeTab, user, loadingAuth, setActiveTab, carrinho, userRole, platformOwner, dadosEmpresa, empresaId, databaseError, logout } = useAppContext();
@@ -59,20 +60,20 @@ function MainLayout() {
 
   // Redireciona para o Login se não estiver autenticado
   if (!user) {
-    return <AuthScreen />;
+    return <Suspense fallback={<ScreenLoading />}><AuthScreen /></Suspense>;
   }
 
   const isAdminPath = window.location.pathname === '/admin' || window.location.pathname === '/developer' || activeTab === 'platform';
   if (isAdminPath) {
-    return platformOwner ? <PlatformAdminScreen /> : <ForbiddenScreen />;
+    return platformOwner ? <Suspense fallback={<ScreenLoading />}><PlatformAdminScreen /></Suspense> : <ForbiddenScreen />;
   }
 
   if (platformOwner) {
-    return <PlatformAdminScreen />;
+    return <Suspense fallback={<ScreenLoading />}><PlatformAdminScreen /></Suspense>;
   }
 
   if (!empresaId) {
-    return <SetupOticaScreen />;
+    return <Suspense fallback={<ScreenLoading />}><SetupOticaScreen /></Suspense>;
   }
 
   // Renderiza o Sistema com o Menu Lateral
@@ -85,6 +86,7 @@ function MainLayout() {
           {isDark ? <Sun size={18} /> : <Moon size={18} />}
         </button>
       <main className="flex-1 overflow-y-auto p-4 pb-5 pt-16 sm:p-10 sm:pt-10 lg:p-12 relative z-10 custom-scrollbar h-full vistta-grid">
+        <Suspense fallback={<ScreenLoading />}>
         {activeTab === 'dashboard' && <DashboardScreen />}
         {activeTab === 'vendas' && <PdvScreen />}
         {activeTab === 'caixa' && <CaixaScreen />}
@@ -98,6 +100,7 @@ function MainLayout() {
         {['fornecedores', 'contas', 'categorias', 'usuarios'].includes(activeTab) && (
           <CadastrosGenericosScreen activeTab={activeTab} />
         )}
+        </Suspense>
       </main>
       <div className="mobile-bottom-nav md:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700 flex items-center z-[55]">
         <MobileNav icon={Home} label="Início" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
@@ -129,6 +132,10 @@ function MainLayout() {
 
 function ForbiddenScreen() {
   return <div className="vistta-shell flex min-h-[100dvh] items-center justify-center p-6"><div className="max-w-md rounded-3xl border border-[var(--vistta-border)] bg-[var(--vistta-surface)] p-8 text-center shadow-[0_20px_60px_rgba(48,32,77,.1)]"><h1 className="font-display text-2xl font-bold">Acesso não autorizado</h1><p className="mt-3 text-sm leading-6 text-[var(--vistta-secondary)]">Esta área é exclusiva do proprietário da plataforma.</p><a href="/" className="mt-6 inline-flex rounded-xl bg-[var(--vistta-plum)] px-5 py-3 text-sm font-bold text-white hover:bg-[var(--vistta-violet)]">Voltar ao sistema</a></div></div>;
+}
+
+function ScreenLoading() {
+  return <div className="flex min-h-[240px] items-center justify-center text-sm font-semibold text-[var(--vistta-secondary)]">Carregando módulo...</div>;
 }
 
 function MobileNav({ icon: Icon, label, active, onClick, badge = 0 }: any) {

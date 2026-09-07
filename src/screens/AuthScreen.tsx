@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, sendPasswordResetEmail, verifyPasswordResetCode, confirmPasswordReset, User } from 'firebase/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithRedirect, getRedirectResult, GoogleAuthProvider, sendPasswordResetEmail, verifyPasswordResetCode, confirmPasswordReset, User } from 'firebase/auth';
 import { ref, update, get } from 'firebase/database';
 import { auth, db } from '../config/firebase';
+import { trackEvent } from '../services/telemetry';
 import { Mail, Lock, EyeOff, Eye, Store, Package, BarChart3, ShieldCheck, Instagram, Linkedin, ArrowUpRight, CheckCircle2 } from 'lucide-react';
 import { CreatorLogo, FeedbackAlert, LogoVistta, ModalBase } from '../components/SharedUI';
 
@@ -35,6 +36,7 @@ export function AuthScreen() {
         if (!result || !ativo) return;
         setIsLoggingIn(true);
         await createGoogleProfile(result.user);
+        void trackEvent('login_google');
       } catch (error: any) {
         if (ativo) setAuthError(getGoogleErrorMessage(error));
       } finally {
@@ -69,6 +71,7 @@ export function AuthScreen() {
     try {
       if (authMode === 'login') {
         await signInWithEmailAndPassword(auth, authEmail.trim(), authPassword);
+        void trackEvent('login', { method: 'password' });
       } else if (authMode === 'register') {
         if (!authEmail.trim()) throw new Error('Informe seu e-mail.');
         if (authPassword.length < 6) throw new Error('A senha deve ter pelo menos 6 caracteres.');
@@ -114,20 +117,9 @@ export function AuthScreen() {
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ prompt: 'select_account' });
     try {
-      const result = await signInWithPopup(auth, provider);
-      await createGoogleProfile(result.user);
+      await signInWithRedirect(auth, provider);
     } catch (error: any) {
-      if (error?.code === 'auth/popup-blocked') {
-        try {
-          await signInWithRedirect(auth, provider);
-          return;
-        } catch (redirectError: any) {
-          setAuthError(getGoogleErrorMessage(redirectError));
-        }
-      } else {
-        setAuthError(getGoogleErrorMessage(error));
-      }
-    } finally {
+      setAuthError(getGoogleErrorMessage(error));
       setIsLoggingIn(false);
     }
   };

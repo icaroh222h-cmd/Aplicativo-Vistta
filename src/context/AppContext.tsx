@@ -4,6 +4,7 @@ import { ref, push, update, remove, onValue, query, limitToLast, orderByChild, s
 import { createUserWithEmailAndPassword, getAuth, onAuthStateChanged, sendPasswordResetEmail, signOut, User } from 'firebase/auth';
 import { db, auth, firebaseConfig } from '../config/firebase';
 import { Produto, Cliente, Venda, Caixa, CarrinhoItem, Orcamento, OrdemServico } from '../types';
+import { trackEvent } from '../services/telemetry';
 
 const PLATFORM_OWNER_EMAIL = 'icaroprojetos7@gmail.com';
 
@@ -151,6 +152,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const userPath = `users/${user.uid}`;
     try {
       await update(ref(db, userPath), { empresaId: empresaRef.key, role: 'admin', status: 'active', email: user.email || '' });
+      void trackEvent('empresa_criada');
     } catch (error: any) {
       reportDatabaseFailure('vincular perfil', userPath, error);
     }
@@ -158,6 +160,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const logout = async () => {
     await signOut(auth);
+    void trackEvent('logout');
     setCarrinho([]);
     setProdutos([]);
     setClientes([]);
@@ -208,7 +211,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       clearProfileListener();
       if (u) {
         setDatabaseError(null);
-        const isDeveloper = u.email?.trim().toLowerCase() === PLATFORM_OWNER_EMAIL && u.emailVerified;
+        let claims: Record<string, unknown> = {};
+        try {
+          claims = (await u.getIdTokenResult(true)).claims;
+        } catch (error) {
+          console.error('[Auth] Falha ao renovar claims do usuário:', { uid: u.uid, email: u.email, error });
+        }
+        const isDeveloper = claims.role === 'developer' && claims.platformOwner === true;
+        if (u.email?.trim().toLowerCase() === PLATFORM_OWNER_EMAIL && !isDeveloper) {
+          console.error('[Auth] Conta developer sem custom claims válidas:', { uid: u.uid, email: u.email, claims: Object.keys(claims) });
+        }
         setPlatformOwner(isDeveloper);
         if (isDeveloper) {
           setUser(u);
@@ -458,7 +470,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const getPlatformOverview = async () => {
     requirePlatformOwner();
-    const [usersSnapshot, companiesSnapshot] = await Promise.all([get(ref(db, 'users')), get(ref(db, 'empresas'))]);
+    let usersSnapshot;
+    let companiesSnapshot;
+    try {
+      [usersSnapshot, companiesSnapshot] = await Promise.all([get(ref(db, 'users')), get(ref(db, 'empresas'))]);
+    } catch (error: any) {
+      console.error('[Platform Dashboard] Leitura global recusada:', { operation: 'get', paths: ['/users', '/empresas'], uid: user?.uid, role: 'developer', empresaId: null, code: error?.code, message: error?.message });
+      throw new Error(`Permission denied ao carregar /users e /empresas. Código: ${error?.code || 'unknown'}. ${error?.message || ''}`);
+    }
     const users = usersSnapshot.val() && typeof usersSnapshot.val() === 'object' ? Object.entries(usersSnapshot.val() as Record<string, any>) : [];
     const companies = companiesSnapshot.val() && typeof companiesSnapshot.val() === 'object' ? Object.entries(companiesSnapshot.val() as Record<string, any>) : [];
     const isActive = (value: any) => !['blocked', 'suspended', 'inactive'].includes(String(value?.status || '').toLowerCase());
@@ -475,7 +494,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const listPlatformCompanies = async () => {
     requirePlatformOwner();
-    const [companiesSnapshot, usersSnapshot] = await Promise.all([get(ref(db, 'empresas')), get(ref(db, 'users'))]);
+    let companiesSnapshot;
+    let usersSnapshot;
+    try {
+      [companiesSnapshot, usersSnapshot] = await Promise.all([get(ref(db, 'empresas')), get(ref(db, 'users'))]);
+    } catch (error: any) {
+      console.error('[Platform Dashboard] Leitura global de empresas recusada:', { operation: 'get', paths: ['/empresas', '/users'], uid: user?.uid, role: 'developer', empresaId: null, code: error?.code, message: error?.message });
+      throw new Error(`Permission denied ao carregar /empresas e /users. Código: ${error?.code || 'unknown'}. ${error?.message || ''}`);
+    }
     const companies = companiesSnapshot.val() && typeof companiesSnapshot.val() === 'object' ? companiesSnapshot.val() as Record<string, any> : {};
     const users = usersSnapshot.val() && typeof usersSnapshot.val() === 'object' ? Object.values(usersSnapshot.val() as Record<string, any>) : [];
     return { data: { companies: Object.entries(companies).map(([companyId, value]) => ({ companyId, info: value?.info || {}, userCount: users.filter((item: any) => item.empresaId === companyId).length })) } };
