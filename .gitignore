@@ -6,5 +6,6 @@ node_modules
 !.env.example
 dist
 functions/lib
+.firebase/
 functions/.firebase
 *.zip

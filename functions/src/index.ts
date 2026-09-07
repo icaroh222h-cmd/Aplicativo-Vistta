@@ -160,18 +160,24 @@ export const finalizeSale = onCall(async request => {
 });
 
 export const openCash = onCall(async request => {
-  const uid = requireAuth(request);
-  const { empresaId } = await getCompany(uid);
-  const valorInicial = numberOrError(request.data?.valorInicial, 'Fundo inicial');
-  const caixasRef = database.ref(`empresas/${empresaId}/caixas`);
-  const caixaRef = caixasRef.push();
-  const result = await caixasRef.transaction(current => {
-    const caixas = current && typeof current === 'object' ? Object.values(current) : [];
-    if (caixas.some((caixa: any) => caixa?.status === 'aberto')) return;
-    return { ...(current || {}), [caixaRef.key as string]: { dataAbertura: new Date().toISOString(), valorInicial, status: 'aberto', operador: uid } };
-  });
-  if (!result.committed) throw new HttpsError('already-exists', 'Já existe um caixa aberto.');
-  return { caixaId: caixaRef.key };
+  try {
+    const uid = requireAuth(request);
+    const { empresaId } = await getCompany(uid);
+    const valorInicial = numberOrError(request.data?.valorInicial, 'Fundo inicial');
+    const caixasRef = database.ref(`empresas/${empresaId}/caixas`);
+    const caixaRef = caixasRef.push();
+    const result = await caixasRef.transaction(current => {
+      const caixas = current && typeof current === 'object' ? Object.values(current) : [];
+      if (caixas.some((caixa: any) => caixa?.status === 'aberto')) return;
+      return { ...(current || {}), [caixaRef.key as string]: { dataAbertura: new Date().toISOString(), valorInicial, status: 'aberto', operador: uid } };
+    });
+    if (!result.committed) throw new HttpsError('already-exists', 'Já existe um caixa aberto.');
+    return { caixaId: caixaRef.key };
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    console.error('Falha inesperada ao abrir caixa:', error);
+    throw new HttpsError('internal', 'Não foi possível abrir o caixa. Verifique a conexão com o Firebase e tente novamente.');
+  }
 });
 
 export const closeCash = onCall(async request => {
@@ -202,7 +208,7 @@ export const closeCash = onCall(async request => {
 });
 export const addCashEntry = onCall(async request => {
   const uid = requireAuth(request);
-  const { empresaId } = await getCompany(uid, true);
+  const { empresaId } = await getCompany(uid);
   const caixaId = String(request.data?.caixaId || '');
   const tipo = String(request.data?.tipo || '');
   const descricao = String(request.data?.descricao || '').trim();

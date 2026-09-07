@@ -1,9 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useRef, ReactNode } from 'react';
 import { getApps, initializeApp } from 'firebase/app';
-import { ref, push, update, remove, onValue, query, limitToLast, orderByChild, startAt, get, getDatabase } from 'firebase/database';
+import { ref, push, update, remove, onValue, query, limitToLast, orderByChild, startAt, get, getDatabase, runTransaction } from 'firebase/database';
 import { createUserWithEmailAndPassword, getAuth, onAuthStateChanged, sendPasswordResetEmail, signOut, User } from 'firebase/auth';
-import { httpsCallable } from 'firebase/functions';
-import { db, auth, firebaseConfig, functions } from '../config/firebase';
+import { db, auth, firebaseConfig } from '../config/firebase';
 import { Produto, Cliente, Venda, Caixa, CarrinhoItem, Orcamento, OrdemServico } from '../types';
 
 const provisioningApp = getApps().find(currentApp => currentApp.name === 'vistta-user-provisioning') || initializeApp(firebaseConfig, 'vistta-user-provisioning');
@@ -131,12 +130,27 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const empresaRef = push(ref(db, 'empresas'));
     if (!empresaRef.key) throw new Error('Não foi possível criar a empresa.');
     const empresaInfo = { nome: nomeNormalizado, criadoEm: new Date().toISOString(), criadoPor: user.uid };
-    await update(ref(db, `empresas/${empresaRef.key}/info`), empresaInfo);
+    const reportDatabaseFailure = (operation: string, path: string, error: any): never => {
+      const code = error?.code || 'unknown';
+      const message = error?.message || String(error);
+      const diagnostic = new Error(`Firebase ${operation} falhou em ${path}. Código: ${code}. Mensagem: ${message}`) as Error & { code?: string; path?: string; operation?: string };
+      diagnostic.code = code;
+      diagnostic.path = path;
+      diagnostic.operation = operation;
+      setDatabaseError(diagnostic.message);
+      throw diagnostic;
+    };
+    const companyPath = `empresas/${empresaRef.key}/info`;
     try {
-      await update(ref(db, `users/${user.uid}`), { empresaId: empresaRef.key, role: 'admin', email: user.email || '' });
-    } catch (error) {
-      setDatabaseError('A ótica foi criada, mas não foi possível vincular seu usuário. Tente novamente.');
-      throw error;
+      await update(ref(db, companyPath), empresaInfo);
+    } catch (error: any) {
+      reportDatabaseFailure('criar empresa', companyPath, error);
+    }
+    const userPath = `users/${user.uid}`;
+    try {
+      await update(ref(db, userPath), { empresaId: empresaRef.key, role: 'admin', status: 'active', email: user.email || '' });
+    } catch (error: any) {
+      reportDatabaseFailure('vincular perfil', userPath, error);
     }
   };
 
@@ -333,13 +347,24 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const abrirCaixa = async (valorInicial: number) => {
     if (!Number.isFinite(valorInicial) || valorInicial < 0) throw new Error('Informe um valor inicial válido.');
-    await httpsCallable(functions, 'openCash')({ valorInicial });
+    const empresa = requireEmpresa();
+    if (caixaAberto) throw new Error('Já existe um caixa aberto nesta empresa.');
+    const caixaRef = push(ref(db, `empresas/${empresa}/caixas`));
+    if (!caixaRef.key) throw new Error('Não foi possível gerar o caixa.');
+    await update(caixaRef, { dataAbertura: new Date().toISOString(), valorInicial, status: 'aberto', operador: user?.uid });
   };
 
   const fecharCaixa = async () => {
     const caixa = caixaAberto;
     if (!caixa) throw new Error('Nenhum caixa aberto.');
-    await httpsCallable(functions, 'closeCash')({ caixaId: caixa.id });
+    const totalLancamentos = toList(caixa.lancamentos).reduce((total, item) => total + (item.tipo === 'entrada' ? Number(item.valor) : -Number(item.valor)), 0);
+    await update(ref(db, `empresas/${requireEmpresa()}/caixas/${caixa.id}`), {
+      status: 'fechado',
+      dataFechamento: new Date().toISOString(),
+      fechadoPor: user?.uid,
+      totalVendas: totalVendasCaixa,
+      valorFinal: Number(caixa.valorInicial || 0) + totalVendasCaixa + totalLancamentos
+    });
   };
 
   const salvarProduto = (data: Partial<Produto>, id?: string) => {
@@ -425,13 +450,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const caixa = caixaAberto;
     if (!caixa) throw new Error('Abra o caixa antes de registrar um lançamento.');
     if (!Number.isFinite(data.valor) || data.valor <= 0) throw new Error('Informe um valor válido.');
-    await httpsCallable(functions, 'addCashEntry')({ caixaId: caixa.id, ...data });
+    const lancamentoRef = push(ref(db, `empresas/${requireEmpresa()}/caixas/${caixa.id}/lancamentos`));
+    await update(lancamentoRef, { ...data, data: new Date().toISOString(), operador: user?.uid });
   };
 
-  const getPlatformOverview = () => httpsCallable(functions, 'getPlatformOverview')({});
-  const listPlatformCompanies = () => httpsCallable(functions, 'listPlatformCompanies')({});
-  const setPlatformCompanyStatus = async (companyId: string, status: 'active' | 'blocked') => { await httpsCallable(functions, 'setCompanyStatus')({ companyId, status }); };
-  const setPlatformUserStatus = async (uid: string, status: 'active' | 'blocked') => { await httpsCallable(functions, 'setUserStatus')({ uid, status }); };
+  const getPlatformOverview = async () => { throw new Error('O painel global requer Cloud Functions e o plano Blaze.'); };
+  const listPlatformCompanies = async () => { throw new Error('O painel global requer Cloud Functions e o plano Blaze.'); };
+  const setPlatformCompanyStatus = async () => { throw new Error('A administração global requer Cloud Functions e o plano Blaze.'); };
+  const setPlatformUserStatus = async () => { throw new Error('A administração global requer Cloud Functions e o plano Blaze.'); };
 
   const finalizarVenda = async (comoOrcamento = false) => {
     if (vendaEmProcessamento.current) return;
@@ -454,14 +480,47 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             data: new Date().toISOString(), status: 'pendente'
          });
       } else {
-          const requestId = crypto.randomUUID();
-          await httpsCallable(functions, 'finalizeSale')({
-            requestId,
-            cliId: pdvCliente,
-            pag: pdvPagamento,
-            desconto: desc,
-            items: carrinho.map(c => ({ id: c.id, codigo: c.codigo, marca: c.marca, modelo: c.modelo, qtd: c.qtd, venda: Number(c.venda), custo: Number(c.custo) }))
-          });
+          const empresa = requireEmpresa();
+          const itensAtualizados = await Promise.all(carrinho.map(async (item) => {
+            const snapshot = await get(ref(db, `empresas/${empresa}/produtos/${item.id}`));
+            if (!snapshot.exists()) throw new Error(`O produto ${item.marca} ${item.modelo} não existe mais.`);
+            const produto = snapshot.val();
+            const venda = Number(produto.venda);
+            const custo = Number(produto.custo);
+            if (!Number.isFinite(venda) || venda < 0 || !Number.isFinite(custo) || custo < 0) throw new Error('Existe um produto com valores inválidos.');
+            return { item, venda, custo, codigo: String(produto.codigo || ''), marca: String(produto.marca || ''), modelo: String(produto.modelo || '') };
+          }));
+          const itensVenda = itensAtualizados.map(({ item, venda, custo, codigo, marca, modelo }) => ({ id: item.id, codigo, marca, modelo, qtd: item.qtd, venda, custo }));
+          const subtotalAtualizado = itensVenda.reduce((total, item) => total + item.venda * item.qtd, 0);
+          const descontoAtualizado = Math.min(Math.max(0, Number(pdvDesconto) || 0), subtotalAtualizado);
+          const reservados: typeof itensVenda = [];
+          try {
+            for (const item of itensVenda) {
+              const resultado = await runTransaction(ref(db, `empresas/${empresa}/produtos/${item.id}/qtd`), (estoqueAtual) => {
+                const estoque = Number(estoqueAtual);
+                if (!Number.isFinite(estoque) || estoque < item.qtd) return;
+                return estoque - item.qtd;
+              });
+              if (!resultado.committed) throw new Error(`Estoque insuficiente para ${item.marca || item.id}.`);
+              reservados.push(item);
+            }
+            await update(push(ref(db, `empresas/${empresa}/vendas`)), {
+              cliId: pdvCliente,
+              pag: pdvPagamento,
+              subtotal: subtotalAtualizado,
+              desconto: descontoAtualizado,
+              total: subtotalAtualizado - descontoAtualizado,
+              custoBase: reservados.reduce((total, item) => total + item.custo * item.qtd, 0),
+              itens: reservados.length,
+              itensDetalhados: reservados,
+              data: new Date().toISOString(),
+              caixaId: caixaAberto?.id,
+              criadoPor: user?.uid
+            });
+          } catch (error) {
+            await Promise.all(reservados.map(item => runTransaction(ref(db, `empresas/${empresa}/produtos/${item.id}/qtd`), (estoqueAtual) => Number(estoqueAtual || 0) + item.qtd)));
+            throw error;
+          }
       }
       setCarrinho([]); setPdvDesconto(0); setPdvCliente('');
       alert(comoOrcamento ? "Orçamento salvo!" : "Venda concluída com sucesso!");

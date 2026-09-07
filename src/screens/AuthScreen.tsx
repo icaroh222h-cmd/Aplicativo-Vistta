@@ -78,12 +78,16 @@ export function AuthScreen() {
         try {
           await update(ref(db, `users/${userCred.user.uid}`), {
             role: 'admin',
+            status: 'active',
             email: authEmail.trim().toLowerCase(),
             nome: ''
           });
-        } catch (dbErr) {
+        } catch (dbErr: any) {
           await userCred.user.delete();
-          throw new Error('Não foi possível concluir o cadastro. Tente novamente.');
+          if (dbErr?.code === 'PERMISSION_DENIED' || dbErr?.code === 'database/permission-denied') {
+            throw new Error('O Firebase recusou o perfil inicial. Verifique se as regras do Realtime Database estão publicadas no projeto correto.');
+          }
+          throw new Error(dbErr?.message || 'Não foi possível concluir o cadastro. Tente novamente.');
         }
       }
     } catch (error: any) {

@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "build:functions": "npm run build --prefix functions",
     "build:all": "npm run build:functions && npm run build",
+    "deploy:hosting": "npm run build && npx firebase-tools deploy --only hosting",
     "preview": "vite preview"
   },
   "dependencies": {

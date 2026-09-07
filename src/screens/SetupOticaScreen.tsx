@@ -21,9 +21,7 @@ export function SetupOticaScreen() {
     try {
       await configurarOtica(nomeNormalizado);
     } catch (error: any) {
-      if (error?.code === 'PERMISSION_DENIED' || error?.code === 'permission-denied' || error?.message === 'PERMISSION_DENIED') {
-        setErro('O Firebase recusou o cadastro. Verifique se as regras do Realtime Database estão publicadas e se este usuário tem perfil de administrador.');
-      } else if (error?.code === 'NETWORK_ERROR' || error?.code === 'network-request-failed') {
+      if (error?.code === 'NETWORK_ERROR' || error?.code === 'network-request-failed') {
         setErro('Não foi possível conectar ao Firebase. Verifique sua conexão e tente novamente.');
       } else {
         setErro(error?.message || 'Não foi possível salvar os dados da ótica.');
