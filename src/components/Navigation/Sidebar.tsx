@@ -18,9 +18,9 @@ function SidebarCategory({ label }: { label: string }) {
 }
 
 export function Sidebar() {
-  const { activeTab, setActiveTab, caixaAberto, orcamentos, userRole, platformOwner, dadosEmpresa, user, logout } = useAppContext();
+  const { activeTab, setActiveTab, caixaAberto, orcamentos, userRole, dadosEmpresa, user, logout } = useAppContext();
   const [collapsed, setCollapsed] = useState(false);
-  
+
   return (
     <aside className={`hidden md:flex flex-col ${collapsed ? 'w-[88px]' : 'w-[270px]'} bg-[#30204d] text-white z-20 transition-all duration-300 shadow-[12px_0_35px_rgba(48,32,77,.08)]`}>
       <div className={`h-[100px] flex items-center ${collapsed ? 'justify-center px-3' : 'px-6'} flex-shrink-0`}>
@@ -30,26 +30,25 @@ export function Sidebar() {
         </div>
       </div>
       <button onClick={() => setCollapsed(!collapsed)} className="absolute top-[72px] -right-3 h-6 w-6 rounded-full bg-[#c6ed76] text-[#30204d] text-xs font-bold shadow-lg">{collapsed ? '›' : '‹'}</button>
-      
+
       <div className={`flex-1 overflow-y-auto py-6 ${collapsed ? 'px-3' : 'px-4'} space-y-1 custom-scrollbar`}>
         <SidebarItem icon={Home} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} collapsed={collapsed} />
-        {platformOwner && <SidebarItem icon={Shield} label="Administração global" active={activeTab === 'platform'} onClick={() => { window.history.pushState({}, '', '/admin'); setActiveTab('platform'); }} collapsed={collapsed} />}
-        
+
         <SidebarCategory label="Operação" />
         <SidebarItem icon={Wallet} label="Caixa Diário" active={activeTab === 'caixa'} onClick={() => setActiveTab('caixa')} badge={caixaAberto ? 'Aberto' : 'Fechado'} badgeColor={caixaAberto ? 'bg-[#c6ed76] text-[#30204d]' : 'bg-white/10 text-white/50'} collapsed={collapsed} />
         <SidebarItem icon={ShoppingCart} label="PDV" active={activeTab === 'vendas'} onClick={() => setActiveTab('vendas')} collapsed={collapsed} />
         <SidebarItem icon={FileText} label="Orçamentos" active={activeTab === 'orcamentos'} onClick={() => setActiveTab('orcamentos')} badge={orcamentos.filter((o: Orcamento) => o.status === 'pendente').length || null} badgeColor="bg-[#f4c96b] text-[#30204d]" collapsed={collapsed} />
         <SidebarItem icon={FileText} label="Ordens de Serviço" active={activeTab === 'ordens'} onClick={() => setActiveTab('ordens')} collapsed={collapsed} />
-        
+
         <SidebarCategory label="Cadastros" />
         <SidebarItem icon={Boxes} label="Estoque" active={activeTab === 'estoque'} onClick={() => setActiveTab('estoque')} collapsed={collapsed} />
         <SidebarItem icon={Users} label="Clientes" active={activeTab === 'clientes'} onClick={() => setActiveTab('clientes')} collapsed={collapsed} />
         <SidebarItem icon={Tags} label="Categorias" active={activeTab === 'categorias'} onClick={() => setActiveTab('categorias')} collapsed={collapsed} />
-        
+
         {userRole === 'admin' && (
           <>
             <SidebarCategory label="Gestão (Admin)" />
-            <SidebarItem icon={TrendingUp} label="DRE Financeiro" active={activeTab === 'financeiro'} onClick={() => setActiveTab('financeiro')} collapsed={collapsed} />
+            <SidebarItem icon={TrendingUp} label="Financeiro" active={activeTab === 'financeiro'} onClick={() => setActiveTab('financeiro')} collapsed={collapsed} />
             <SidebarItem icon={ArrowRightLeft} label="Contas" active={activeTab === 'contas'} onClick={() => setActiveTab('contas')} collapsed={collapsed} />
             <SidebarItem icon={UserPlus} label="Usuários" active={activeTab === 'usuarios'} onClick={() => setActiveTab('usuarios')} collapsed={collapsed} />
           </>
@@ -66,7 +65,7 @@ export function Sidebar() {
           <div className="w-10 h-10 rounded-full bg-[#c6ed76] text-[#30204d] flex items-center justify-center font-bold mr-3 shrink-0">
             {user?.email?.charAt(0).toUpperCase() || 'U'}
           </div>
-          {!collapsed && <div className="min-w-0"><div className="text-sm font-bold truncate text-white">{user?.email?.split('@')[0] || 'Usuário'}</div><div className="text-[10px] text-white/45 font-bold uppercase">{userRole === 'admin' ? 'Administrador' : userRole === 'manager' ? 'Gestor' : 'Usuário'}</div></div>}
+          {!collapsed && <div className="min-w-0"><div className="text-sm font-bold truncate text-white">{user?.email?.split('@')[0] || 'Usuário'}</div><div className="text-[10px] text-white/45 font-bold uppercase">{userRole === 'admin' ? 'Administrador' : userRole === 'gerente' ? 'Gerente' : userRole === 'vendedor' ? 'Vendedor' : 'Usuário'}</div></div>}
         </div>
         {!collapsed && <button onClick={() => logout().catch((error) => console.error('Não foi possível sair:', error))} className="text-white/45 hover:text-[#f4c96b]" title="Sair"><LogOut size={18} /></button>}
       </div>

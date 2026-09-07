@@ -1,21 +1,19 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useRef, ReactNode } from 'react';
 import { getApps, initializeApp } from 'firebase/app';
-import { ref, push, update, remove, onValue, query, limitToLast, orderByChild, startAt, get, getDatabase, runTransaction } from 'firebase/database';
+import { ref, push, update, remove, onValue, query, limitToLast, orderByChild, startAt, get, runTransaction } from 'firebase/database';
 import { createUserWithEmailAndPassword, getAuth, onAuthStateChanged, sendPasswordResetEmail, signOut, User } from 'firebase/auth';
 import { db, auth, firebaseConfig } from '../config/firebase';
 import { Produto, Cliente, Venda, Caixa, CarrinhoItem, Orcamento, OrdemServico } from '../types';
 import { trackEvent } from '../services/telemetry';
 
-const PLATFORM_OWNER_EMAIL = 'icaroprojetos7@gmail.com';
-
 const provisioningApp = getApps().find(currentApp => currentApp.name === 'vistta-user-provisioning') || initializeApp(firebaseConfig, 'vistta-user-provisioning');
 const provisioningAuth = getAuth(provisioningApp);
-const provisioningDb = getDatabase(provisioningApp);
 
 export const formatMoney = (v: number | string) => {
   const value = Number(v);
   return (Number.isFinite(value) ? value : 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 };
+
 export const toList = <T,>(value: T[] | Record<string, T> | null | undefined): T[] => {
   if (Array.isArray(value)) return value;
   if (value && typeof value === 'object') return Object.values(value);
@@ -26,10 +24,7 @@ interface AppContextType {
   user: User | null;
   loadingAuth: boolean;
   userRole: string | null;
-  platformOwner: boolean;
-  developerClaimsPending: boolean;
-  empresaId: string | null;
-  dadosEmpresa: { nome?: string } | null;
+  dadosEmpresa: { nome?: string; [key: string]: any } | null;
   databaseError: string | null;
   configurarOtica: (nome: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -72,17 +67,13 @@ interface AppContextType {
   pdvPagamento: string;
   setPdvPagamento: (p: string) => void;
   finalizandoVenda: boolean;
-  getPlatformOverview: () => Promise<any>;
-  listPlatformCompanies: () => Promise<any>;
-  setPlatformCompanyStatus: (companyId: string, status: 'active' | 'blocked') => Promise<void>;
-  setPlatformUserStatus: (uid: string, status: 'active' | 'blocked') => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
 
 export const useAppContext = () => {
   const context = useContext(AppContext);
-  if (!context) throw new Error("useAppContext deve ser usado dentro de um AppProvider");
+  if (!context) throw new Error('useAppContext deve ser usado dentro de um AppProvider');
   return context;
 };
 
@@ -90,16 +81,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [userRole, setUserRole] = useState<string | null>(null);
-  const [platformOwner, setPlatformOwner] = useState(false);
-  const [developerClaimsPending, setDeveloperClaimsPending] = useState(false);
-  const [empresaId, setEmpresaId] = useState<string | null>(null);
-  const [dadosEmpresa, setDadosEmpresa] = useState<{ nome?: string } | null>(null);
+  const [dadosEmpresa, setDadosEmpresa] = useState<{ nome?: string; [key: string]: any } | null>(null);
   const [databaseError, setDatabaseError] = useState<string | null>(null);
-  
+
   const [activeTab, setActiveTab] = useState('dashboard');
   const [pdvSearch, setPdvSearch] = useState('');
   const [carrinho, setCarrinho] = useState<CarrinhoItem[]>([]);
-  
+
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [vendas, setVendas] = useState<Venda[]>([]);
@@ -115,49 +103,46 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [pdvPagamento, setPdvPagamento] = useState('Pix');
   const [pdvDesconto, setPdvDesconto] = useState(0);
   const [finalizandoVenda, setFinalizandoVenda] = useState(false);
+
   const vendaEmProcessamento = useRef(false);
   const perfilEmProvisionamento = useRef<string | null>(null);
 
   const caixaAberto = useMemo(() => caixas.find(c => c.status === 'aberto'), [caixas]);
-  const vendasDoCaixa = useMemo(() => caixaAberto ? vendas.filter(v => v.caixaId === caixaAberto.id) : [], [vendas, caixaAberto]);
-  const totalVendasCaixa = useMemo(() => vendasDoCaixa.reduce((acc, v) => acc + (v.total || 0), 0), [vendasDoCaixa]);
+  const vendasDoCaixa = useMemo(() => (caixaAberto ? vendas.filter(v => v.caixaId === caixaAberto.id) : []), [caixas, vendas, caixaAberto]);
+  const totalVendasCaixa = useMemo(() => vendasDoCaixa.reduce((total, venda) => total + Number(venda.total || 0), 0), [vendasDoCaixa]);
 
-  const requireEmpresa = () => {
-    if (!user) throw new Error('Usuário não autenticado. Entre novamente.');
-    if (!empresaId) throw new Error('Empresa não identificada.');
-    return empresaId;
-  };
+  const configureDatabaseError = (message: string) => setDatabaseError(message);
 
   const configurarOtica = async (nome: string) => {
     const nomeNormalizado = nome.trim();
     if (!user) throw new Error('Usuário não autenticado.');
     if (!nomeNormalizado) throw new Error('Informe o nome da ótica.');
-    if (empresaId) return;
-    const empresaRef = push(ref(db, 'empresas'));
-    if (!empresaRef.key) throw new Error('Não foi possível criar a empresa.');
-    const empresaInfo = { nome: nomeNormalizado, criadoEm: new Date().toISOString(), criadoPor: user.uid };
-    const reportDatabaseFailure = (operation: string, path: string, error: any): never => {
+
+    const configuracoesPath = 'configuracoes/empresa';
+    const payload = {
+      nome: nomeNormalizado,
+      criadoEm: new Date().toISOString(),
+      criadoPor: user.uid,
+      status: 'ativa'
+    };
+
+    try {
+      await update(ref(db, configuracoesPath), payload);
+      await update(ref(db, `users/${user.uid}`), {
+        role: 'admin',
+        status: 'active',
+        email: user.email || '',
+        nome: user.displayName || nomeNormalizado,
+        loja: nomeNormalizado
+      });
+      setDadosEmpresa(payload);
+      setUserRole('admin');
+      void trackEvent('loja_configurada');
+    } catch (error: any) {
       const code = error?.code || 'unknown';
       const message = error?.message || String(error);
-      const diagnostic = new Error(`Firebase ${operation} falhou em ${path}. Código: ${code}. Mensagem: ${message}`) as Error & { code?: string; path?: string; operation?: string };
-      diagnostic.code = code;
-      diagnostic.path = path;
-      diagnostic.operation = operation;
-      setDatabaseError(diagnostic.message);
-      throw diagnostic;
-    };
-    const companyPath = `empresas/${empresaRef.key}/info`;
-    try {
-      await update(ref(db, companyPath), empresaInfo);
-    } catch (error: any) {
-      reportDatabaseFailure('criar empresa', companyPath, error);
-    }
-    const userPath = `users/${user.uid}`;
-    try {
-      await update(ref(db, userPath), { empresaId: empresaRef.key, role: 'admin', status: 'active', email: user.email || '' });
-      void trackEvent('empresa_criada');
-    } catch (error: any) {
-      reportDatabaseFailure('vincular perfil', userPath, error);
+      configureDatabaseError(`Não foi possível salvar a configuração da ótica. Código: ${code}. ${message}`);
+      throw new Error(`Não foi possível salvar a configuração da ótica. ${message}`);
     }
   };
 
@@ -183,8 +168,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const saveRecord = async (collection: string, data: Record<string, any>, id?: string) => {
-    const empresa = requireEmpresa();
-    const collectionPath = `empresas/${empresa}/${collection}`;
+    const collectionPath = collection;
     if (id) {
       await update(ref(db, `${collectionPath}/${id}`), data);
       return;
@@ -194,129 +178,94 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const deleteRecord = async (collection: string, id: string) => {
-    const empresa = requireEmpresa();
-    await remove(ref(db, `empresas/${empresa}/${collection}/${id}`));
+    await remove(ref(db, `${collection}/${id}`));
   };
 
-  // Autenticação e Perfis
   useEffect(() => {
-    let unsubscribeProfile: (() => void) | undefined;
+    let profileUnsubscribe: (() => void) | undefined;
     let profileTimeout: ReturnType<typeof setTimeout> | undefined;
 
     const clearProfileListener = () => {
-      unsubscribeProfile?.();
-      unsubscribeProfile = undefined;
+      profileUnsubscribe?.();
+      profileUnsubscribe = undefined;
       if (profileTimeout) clearTimeout(profileTimeout);
       profileTimeout = undefined;
     };
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (u) => {
       clearProfileListener();
-      if (u) {
-        setDatabaseError(null);
-        let claims: Record<string, unknown> = {};
-        try {
-          claims = (await u.getIdTokenResult(true)).claims;
-        } catch (error) {
-          console.error('[Auth] Falha ao renovar claims do usuário:', { uid: u.uid, email: u.email, error });
-        }
-        const isDeveloper = claims.role === 'developer' && claims.platformOwner === true;
-        const isOwnerAccount = u.email?.trim().toLowerCase() === PLATFORM_OWNER_EMAIL;
-        setDeveloperClaimsPending(isOwnerAccount && !isDeveloper);
-        if (isOwnerAccount && !isDeveloper) {
-          console.error('[Auth] Conta developer sem custom claims válidas:', { uid: u.uid, email: u.email, claims: Object.keys(claims) });
-        }
-        setPlatformOwner(isDeveloper);
-        if (isDeveloper) {
-          setUser(u);
-          setUserRole('developer');
-          setEmpresaId(null);
-          setDadosEmpresa(null);
-          setLoadingAuth(false);
-          return;
-        }
-        const profileRef = ref(db, `users/${u.uid}`);
-        try {
-          const profileSnapshot = await get(profileRef);
-          if (!profileSnapshot.exists() && perfilEmProvisionamento.current !== u.uid) {
-            perfilEmProvisionamento.current = u.uid;
-            await update(profileRef, {
-              role: 'admin',
-              status: 'active',
-              email: u.email || '',
-              nome: u.displayName || '',
-              createdAt: new Date().toISOString()
-            });
-          }
-        } catch (error: any) {
-          console.error('[Auth] Falha ao criar/recuperar perfil:', {
-            operation: 'get/update',
-            path: `users/${u.uid}`,
-            uid: u.uid,
-            email: u.email,
-            code: error?.code,
-            message: error?.message
-          });
-          setDatabaseError(`Não foi possível criar o perfil do usuário. Código: ${error?.code || 'unknown'}. ${error?.message || ''}`);
-          setUser(null);
-          setEmpresaId(null);
-          setUserRole(null);
-          setLoadingAuth(false);
-          return;
-        }
-        profileTimeout = setTimeout(() => {
-          console.error('Tempo excedido ao carregar o perfil do usuário.');
-          setDatabaseError('Não foi possível carregar seu perfil no Firebase. Verifique a conexão e tente novamente.');
-          setUser(null);
-          setEmpresaId(null);
-          setUserRole(null);
-          setLoadingAuth(false);
-        }, 10000);
 
-        unsubscribeProfile = onValue(
-          profileRef,
-          (snap) => {
-            if (!snap.exists()) return;
-            const data = snap.val();
-            setEmpresaId(data?.empresaId || null);
-            setUserRole(['admin', 'manager', 'user'].includes(data?.role) ? data.role : null);
-            if (data?.empresaId) {
-              get(ref(db, `empresas/${data.empresaId}/info`)).then((snap) => {
-                setDadosEmpresa(snap.exists() ? snap.val() : null);
-              }).catch((error) => {
-                console.error('Não foi possível carregar os dados da empresa:', error);
-                setDatabaseError('Não foi possível carregar os dados da empresa.');
-              });
-            } else {
-              setDadosEmpresa(null);
-            }
-            setUser(u);
-            setLoadingAuth(false);
-            clearProfileListener();
-          },
-          (error) => {
-            console.error('Não foi possível carregar o perfil do usuário:', error);
-            setEmpresaId(null);
-            setUserRole(null);
-            setDadosEmpresa(null);
-            setDatabaseError('Não foi possível carregar seu perfil no Firebase. Verifique as regras do Realtime Database.');
-            setUser(null);
-            setLoadingAuth(false);
-            clearProfileListener();
-          }
-        );
-      } else {
+      if (!u) {
         perfilEmProvisionamento.current = null;
-        setDeveloperClaimsPending(false);
         setUser(null);
-        setEmpresaId(null);
         setUserRole(null);
-        setPlatformOwner(false);
-        setPlatformOwner(false);
         setDadosEmpresa(null);
         setDatabaseError(null);
         setLoadingAuth(false);
+        return;
       }
+
+      setDatabaseError(null);
+      const profileRef = ref(db, `users/${u.uid}`);
+
+      try {
+        const profileSnapshot = await get(profileRef);
+        if (!profileSnapshot.exists() && perfilEmProvisionamento.current !== u.uid) {
+          perfilEmProvisionamento.current = u.uid;
+          await update(profileRef, {
+            role: 'admin',
+            status: 'active',
+            email: u.email || '',
+            nome: u.displayName || '',
+            createdAt: new Date().toISOString()
+          });
+        }
+      } catch (error: any) {
+        console.error('[Auth] Falha ao criar/recuperar perfil', error);
+        setDatabaseError(`Não foi possível criar o perfil do usuário. ${error?.message || 'Verifique a conexão.'}`);
+        setUser(null);
+        setUserRole(null);
+        setLoadingAuth(false);
+        return;
+      }
+
+      profileTimeout = setTimeout(() => {
+        console.error('Tempo excedido ao carregar o perfil do usuário.');
+        setDatabaseError('Não foi possível carregar seu perfil. Verifique a conexão e tente novamente.');
+        setUser(null);
+        setUserRole(null);
+        setLoadingAuth(false);
+      }, 10000);
+
+      profileUnsubscribe = onValue(profileRef, (snapshot) => {
+        if (!snapshot.exists()) return;
+        const data = snapshot.val() || {};
+        const nextRole = ['admin', 'gerente', 'vendedor', 'caixa', 'estoque', 'atendente'].includes(data.role) ? data.role : 'admin';
+        setUserRole(nextRole);
+        setUser(u);
+        setLoadingAuth(false);
+        clearProfileListener();
+
+        const lojaRef = ref(db, 'configuracoes/empresa');
+        get(lojaRef).then((lojaSnapshot) => {
+          if (lojaSnapshot.exists()) {
+            setDadosEmpresa(lojaSnapshot.val());
+          } else {
+            setDadosEmpresa(null);
+          }
+        }).catch((error: any) => {
+          console.error('Não foi possível carregar a configuração da ótica:', error);
+          setDatabaseError('Não foi possível carregar a configuração da ótica.');
+        });
+      }, (error) => {
+        console.error('Não foi possível carregar o perfil do usuário:', error);
+        setUser(null);
+        setUserRole(null);
+        setDadosEmpresa(null);
+        setDatabaseError('Não foi possível carregar seu perfil no Firebase. Verifique as regras do Realtime Database.');
+        setLoadingAuth(false);
+        clearProfileListener();
+      });
     });
 
     return () => {
@@ -325,84 +274,79 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     };
   }, []);
 
-  // Listeners das Coleções no Banco de Dados
   useEffect(() => {
-    if (!empresaId) return;
-    const basePath = `empresas/${empresaId}`;
-    const inicioMes = new Date();
-    inicioMes.setDate(1);
-    inicioMes.setHours(0, 0, 0, 0);
-    const collections = [
-      { name: 'produtos', setter: setProdutos, queryRef: ref(db, `${basePath}/produtos`) },
-      { name: 'clientes', setter: setClientes, queryRef: ref(db, `${basePath}/clientes`) },
-      { name: 'fornecedores', setter: setFornecedores, queryRef: ref(db, `${basePath}/fornecedores`) },
-      { name: 'categorias', setter: setCategorias, queryRef: ref(db, `${basePath}/categorias`) },
-      { name: 'orcamentos', setter: setOrcamentos, queryRef: ref(db, `${basePath}/orcamentos`) },
-      { name: 'ordensServico', setter: setOrdensServico, queryRef: ref(db, `${basePath}/ordensServico`) },
-      { name: 'vendas', setter: setVendas, queryRef: query(ref(db, `${basePath}/vendas`), orderByChild('data'), startAt(inicioMes.toISOString())) },
-      { name: 'caixas', setter: setCaixas, queryRef: query(ref(db, `${basePath}/caixas`), limitToLast(100)) }
+    const baseCollections = [
+      { name: 'produtos', setter: setProdutos, queryRef: ref(db, 'produtos') },
+      { name: 'clientes', setter: setClientes, queryRef: ref(db, 'clientes') },
+      { name: 'fornecedores', setter: setFornecedores, queryRef: ref(db, 'fornecedores') },
+      { name: 'categorias', setter: setCategorias, queryRef: ref(db, 'categorias') },
+      { name: 'orcamentos', setter: setOrcamentos, queryRef: ref(db, 'orcamentos') },
+      { name: 'ordensServico', setter: setOrdensServico, queryRef: ref(db, 'ordensServico') },
+      { name: 'vendas', setter: setVendas, queryRef: query(ref(db, 'vendas'), orderByChild('data'), startAt(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString())) },
+      { name: 'caixas', setter: setCaixas, queryRef: query(ref(db, 'caixas'), limitToLast(100)) }
     ];
+
     if (userRole === 'admin') {
-      collections.push(
-        { name: 'contas', setter: setContas, queryRef: ref(db, `${basePath}/contas`) },
-        { name: 'usuarios', setter: setUsuarios, queryRef: ref(db, `${basePath}/usuarios`) }
+      baseCollections.push(
+        { name: 'contas', setter: setContas, queryRef: ref(db, 'contas') },
+        { name: 'usuarios', setter: setUsuarios, queryRef: ref(db, 'users') }
       );
     } else {
       setContas([]);
       setUsuarios([]);
     }
 
-    setDatabaseError(null);
-    const unsubs = collections.map(col => {
-      return onValue(col.queryRef, (snapshot) => {
-        const data: any[] = [];
-        snapshot.forEach((child) => {
-          const value = child.val();
-          const record = value && typeof value === 'object' ? { id: child.key, ...value } : { id: child.key, value };
-          if (col.name === 'caixas') record.lancamentos = toList(record.lancamentos);
-          data.push(record);
-        });
-        col.setter(data);
-      }, (error) => {
-        console.error(`Erro ao carregar ${col.name}:`, error);
-        setDatabaseError(`Não foi possível carregar ${col.name}. Verifique as regras do Firebase.`);
+    const unsubs = baseCollections.map(col => onValue(col.queryRef, (snapshot) => {
+      const data: any[] = [];
+      snapshot.forEach((child) => {
+        const value = child.val();
+        const record = value && typeof value === 'object' ? { id: child.key, ...value } : { id: child.key, value };
+        if (col.name === 'caixas') record.lancamentos = toList(record.lancamentos);
+        data.push(record);
       });
-    });
+      col.setter(data);
+    }, (error) => {
+      console.error(`Erro ao carregar ${col.name}:`, error);
+      setDatabaseError(`Não foi possível carregar ${col.name}. Verifique as regras do Firebase.`);
+    }));
 
-    return () => unsubs.forEach(u => u());
-  }, [empresaId, userRole]);
+    return () => unsubs.forEach(unsub => unsub());
+  }, [userRole]);
 
-  // Funções do PDV
   const addToCart = (prod: Produto) => {
     const estoqueDisponivel = Number(prod.qtd);
     if (!prod.id || !Number.isFinite(estoqueDisponivel) || estoqueDisponivel <= 0) return;
     setCarrinho(prev => {
-      const idx = prev.findIndex(c => c.id === prod.id);
+      const idx = prev.findIndex(item => item.id === prod.id);
       if (idx > -1) {
-        const newCart = [...prev];
-        newCart[idx].qtd = Math.min(newCart[idx].qtd + 1, Number(prod.qtd));
-        return newCart;
+        const nextCart = [...prev];
+        nextCart[idx].qtd = Math.min(nextCart[idx].qtd + 1, Number(prod.qtd));
+        return nextCart;
       }
       return [...prev, { ...prod, qtd: 1 }];
     });
   };
 
-  const removeFromCart = (id: string) => setCarrinho(prev => prev.filter(c => c.id !== id));
+  const removeFromCart = (id: string) => setCarrinho(prev => prev.filter(item => item.id !== id));
 
   const abrirCaixa = async (valorInicial: number) => {
     if (!Number.isFinite(valorInicial) || valorInicial < 0) throw new Error('Informe um valor inicial válido.');
-    const empresa = requireEmpresa();
-    if (caixaAberto) throw new Error('Já existe um caixa aberto nesta empresa.');
-    const caixaRef = push(ref(db, `empresas/${empresa}/caixas`));
+    if (caixaAberto) throw new Error('Já existe um caixa aberto.');
+    const caixaRef = push(ref(db, 'caixas'));
     if (!caixaRef.key) throw new Error('Não foi possível gerar o caixa.');
-    await update(caixaRef, { dataAbertura: new Date().toISOString(), valorInicial, status: 'aberto', operador: user?.uid });
+    await update(caixaRef, {
+      dataAbertura: new Date().toISOString(),
+      valorInicial,
+      status: 'aberto',
+      operador: user?.uid
+    });
   };
 
   const fecharCaixa = async () => {
     const caixa = caixaAberto;
     if (!caixa) throw new Error('Nenhum caixa aberto.');
     const totalLancamentos = toList(caixa.lancamentos).reduce((total, item) => total + (item.tipo === 'entrada' ? Number(item.valor) : -Number(item.valor)), 0);
-    await update(ref(db, `empresas/${requireEmpresa()}/caixas/${caixa.id}`), {
+    await update(ref(db, `caixas/${caixa.id}`), {
       status: 'fechado',
       dataFechamento: new Date().toISOString(),
       fechadoPor: user?.uid,
@@ -419,14 +363,18 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       qtd: Number(data.qtd),
       min: Number(data.min)
     };
+
     if (![produto.custo, produto.venda, produto.qtd, produto.min].every(value => Number.isFinite(value) && value >= 0)) {
       throw new Error('Informe valores numéricos válidos para custo, venda e estoque.');
     }
+
     return saveRecord('produtos', produto, id);
   };
+
   const excluirProduto = (id: string) => deleteRecord('produtos', id);
   const salvarCliente = (data: Partial<Cliente>, id?: string) => saveRecord('clientes', data, id);
   const excluirCliente = (id: string) => deleteRecord('clientes', id);
+
   const salvarCadastro = async (collection: string, data: Record<string, any>, id?: string) => {
     if (collection !== 'usuarios' || id) {
       const normalizedData = collection === 'contas'
@@ -434,197 +382,168 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         : collection === 'fornecedores'
           ? { ...data, prazoEntrega: data.prazoEntrega === '' ? 0 : Number(data.prazoEntrega) }
           : data;
+
       if (collection === 'contas' && (!Number.isFinite(normalizedData.valor) || normalizedData.valor < 0)) {
         throw new Error('Informe um valor válido para a conta.');
       }
+
       await saveRecord(collection, normalizedData, id);
       return;
     }
-    const empresa = requireEmpresa();
+
     if (!user) throw new Error('Usuário não autenticado. Entre novamente.');
     if (userRole !== 'admin') throw new Error('Somente administradores podem criar usuários.');
+
     const email = String(data.email || '').trim().toLowerCase();
     if (!email) throw new Error('Informe o e-mail do usuário.');
     const senha = String(data.senha || '');
     const confirmarSenha = String(data.confirmarSenha || '');
     if (senha && senha.length < 6) throw new Error('A senha deve ter pelo menos 6 caracteres.');
     if (senha !== confirmarSenha) throw new Error('As senhas informadas não coincidem.');
+
     let criado: User | null = null;
     try {
       const credencial = await createUserWithEmailAndPassword(provisioningAuth, email, senha || `${crypto.randomUUID()}Aa1!`);
       criado = credencial.user;
-      const invitedRole = data.perfil === 'manager' ? 'manager' : 'user';
-      await update(ref(provisioningDb, `users/${criado.uid}`), {
-        empresaId: empresa,
-        role: invitedRole,
+      const perfil = data.perfil === 'gerente' ? 'gerente' : data.perfil === 'vendedor' ? 'vendedor' : data.perfil === 'caixa' ? 'caixa' : data.perfil === 'estoque' ? 'estoque' : 'atendente';
+      await update(ref(db, `users/${criado.uid}`), {
+        role: perfil,
         status: 'active',
         email,
         nome: data.nome || '',
         convidadoPor: user.uid
       });
+
       if (!senha) await sendPasswordResetEmail(provisioningAuth, email);
       const { senha: _senha, confirmarSenha: _confirmarSenha, ...dadosUsuario } = data;
-      await saveRecord('usuarios', { ...dadosUsuario, email, authUid: criado.uid, status: senha ? 'acesso_criado' : 'convite_enviado', criadoEm: new Date().toISOString() });
-      await signOut(provisioningAuth);
+      await saveRecord('usuarios', {
+        ...dadosUsuario,
+        email,
+        authUid: criado.uid,
+        status: senha ? 'acesso_criado' : 'convite_enviado',
+        criadoEm: new Date().toISOString()
+      });
+      await signOut(provisioningAuth).catch(() => undefined);
     } catch (error: any) {
-      if (criado) await remove(ref(provisioningDb, `users/${criado.uid}`)).catch(() => undefined);
-      if (criado) await criado.delete().catch(() => undefined);
+      if (criado) {
+        await remove(ref(db, `users/${criado.uid}`)).catch(() => undefined);
+        await criado.delete().catch(() => undefined);
+      }
       await signOut(provisioningAuth).catch(() => undefined);
       throw new Error(error?.code === 'auth/email-already-in-use' ? 'Este e-mail já possui uma conta.' : error?.message || 'Não foi possível criar o usuário.');
     }
   };
+
   const excluirCadastro = (collection: string, id: string) => deleteRecord(collection, id);
   const excluirOrcamento = (id: string) => deleteRecord('orcamentos', id);
   const salvarOrdemServico = (data: Partial<OrdemServico>, id?: string) => saveRecord('ordensServico', data, id);
+
   const converterOrcamentoParaOs = async (orcamento: Orcamento) => {
     if (orcamento.status !== 'pendente') throw new Error('Este orçamento já foi processado.');
     if (ordensServico.some(ordem => ordem.orcamentoId === orcamento.id)) throw new Error('Este orçamento já possui uma ordem de serviço.');
+
     await salvarOrdemServico({
       clienteId: orcamento.cliId,
       orcamentoId: orcamento.id,
-      itens: toList(orcamento.itens).map(item => ({ produtoId: item.id, descricao: `${item.marca || ''} ${item.modelo || ''}`.trim(), qtd: Number(item.qtd) || 1, valor: Number(item.venda) || 0, tratamento: '' })),
+      itens: toList(orcamento.itens).map(item => ({
+        produtoId: item.id,
+        descricao: `${item.marca || ''} ${item.modelo || ''}`.trim(),
+        qtd: Number(item.qtd) || 1,
+        valor: Number(item.venda) || 0,
+        tratamento: ''
+      })),
       status: 'aguardando_montagem',
       criadoEm: new Date().toISOString(),
       atualizadoEm: new Date().toISOString()
     });
-    await update(ref(db, `empresas/${requireEmpresa()}/orcamentos/${orcamento.id}`), { status: 'aprovado' });
+
+    await update(ref(db, `orcamentos/${orcamento.id}`), { status: 'aprovado' });
   };
 
   const registrarLancamentoCaixa = async (data: { tipo: 'entrada' | 'saida' | 'sangria'; descricao: string; valor: number }) => {
     const caixa = caixaAberto;
     if (!caixa) throw new Error('Abra o caixa antes de registrar um lançamento.');
     if (!Number.isFinite(data.valor) || data.valor <= 0) throw new Error('Informe um valor válido.');
-    const lancamentoRef = push(ref(db, `empresas/${requireEmpresa()}/caixas/${caixa.id}/lancamentos`));
+    const lancamentoRef = push(ref(db, `caixas/${caixa.id}/lancamentos`));
     await update(lancamentoRef, { ...data, data: new Date().toISOString(), operador: user?.uid });
-  };
-
-  const requirePlatformOwner = () => {
-    if (!platformOwner || user?.email?.trim().toLowerCase() !== PLATFORM_OWNER_EMAIL || !user.emailVerified) {
-      throw new Error('Acesso restrito ao proprietário autorizado da plataforma.');
-    }
-  };
-
-  const getPlatformOverview = async () => {
-    requirePlatformOwner();
-    let usersSnapshot;
-    let companiesSnapshot;
-    try {
-      [usersSnapshot, companiesSnapshot] = await Promise.all([get(ref(db, 'users')), get(ref(db, 'empresas'))]);
-    } catch (error: any) {
-      console.error('[Platform Dashboard] Leitura global recusada:', { operation: 'get', paths: ['/users', '/empresas'], uid: user?.uid, role: 'developer', empresaId: null, code: error?.code, message: error?.message });
-      throw new Error(`Permission denied ao carregar /users e /empresas. Código: ${error?.code || 'unknown'}. ${error?.message || ''}`);
-    }
-    const users = usersSnapshot.val() && typeof usersSnapshot.val() === 'object' ? Object.entries(usersSnapshot.val() as Record<string, any>) : [];
-    const companies = companiesSnapshot.val() && typeof companiesSnapshot.val() === 'object' ? Object.entries(companiesSnapshot.val() as Record<string, any>) : [];
-    const isActive = (value: any) => !['blocked', 'suspended', 'inactive'].includes(String(value?.status || '').toLowerCase());
-    const createdAt = (value: any) => Date.parse(value?.createdAt || value?.criadoEm || '') || 0;
-    const newSince = Date.now() - 30 * 24 * 60 * 60 * 1000;
-    return { data: {
-      generatedAt: new Date().toISOString(),
-      users: { total: users.length, active: users.filter(([, value]) => isActive(value)).length, blocked: users.filter(([, value]) => !isActive(value)).length, newLast30Days: users.filter(([, value]) => createdAt(value) >= newSince).length },
-      companies: { total: companies.length, active: companies.filter(([, value]) => isActive(value?.info)).length, blocked: companies.filter(([, value]) => !isActive(value?.info)).length, newLast30Days: companies.filter(([, value]) => createdAt(value?.info) >= newSince).length },
-      recentLogins: [], recentActivity: [], security: { mfa: 'not_configured', suspiciousAttempts: 'not_collected' },
-      billing: { configured: false, message: 'Nenhuma integração de planos ou pagamentos foi configurada.' }
-    } };
-  };
-
-  const listPlatformCompanies = async () => {
-    requirePlatformOwner();
-    let companiesSnapshot;
-    let usersSnapshot;
-    try {
-      [companiesSnapshot, usersSnapshot] = await Promise.all([get(ref(db, 'empresas')), get(ref(db, 'users'))]);
-    } catch (error: any) {
-      console.error('[Platform Dashboard] Leitura global de empresas recusada:', { operation: 'get', paths: ['/empresas', '/users'], uid: user?.uid, role: 'developer', empresaId: null, code: error?.code, message: error?.message });
-      throw new Error(`Permission denied ao carregar /empresas e /users. Código: ${error?.code || 'unknown'}. ${error?.message || ''}`);
-    }
-    const companies = companiesSnapshot.val() && typeof companiesSnapshot.val() === 'object' ? companiesSnapshot.val() as Record<string, any> : {};
-    const users = usersSnapshot.val() && typeof usersSnapshot.val() === 'object' ? Object.values(usersSnapshot.val() as Record<string, any>) : [];
-    return { data: { companies: Object.entries(companies).map(([companyId, value]) => ({ companyId, info: value?.info || {}, userCount: users.filter((item: any) => item.empresaId === companyId).length })) } };
-  };
-
-  const setPlatformCompanyStatus = async (companyId: string, status: 'active' | 'blocked') => {
-    requirePlatformOwner();
-    if (!companyId || !['active', 'blocked'].includes(status)) throw new Error('Empresa ou status inválido.');
-    await update(ref(db, `empresas/${companyId}/info`), { status, updatedAt: new Date().toISOString(), updatedBy: user?.uid });
-  };
-
-  const setPlatformUserStatus = async (uid: string, status: 'active' | 'blocked') => {
-    requirePlatformOwner();
-    const ownerUid = user?.uid;
-    if (!uid || !['active', 'blocked'].includes(status)) throw new Error('Usuário ou status inválido.');
-    if (!ownerUid) throw new Error('Sessão do proprietário não encontrada.');
-    if (uid === ownerUid) throw new Error('O proprietário não pode bloquear a própria conta.');
-    await update(ref(db, `users/${uid}`), { status, updatedAt: new Date().toISOString(), updatedBy: ownerUid });
   };
 
   const finalizarVenda = async (comoOrcamento = false) => {
     if (vendaEmProcessamento.current) return;
-    if (carrinho.length === 0 || !empresaId) return alert("Carrinho vazio!");
-    if (!comoOrcamento && !caixaAberto) return alert("Abra o caixa primeiro!");
+    if (carrinho.length === 0) return alert('Carrinho vazio!');
+    if (!comoOrcamento && !caixaAberto) return alert('Abra o caixa primeiro!');
 
-    let subtotal = carrinho.reduce((a, b) => a + (Number(b.venda) * b.qtd), 0);
-    let custoTotal = carrinho.reduce((a, b) => a + (Number(b.custo) * b.qtd), 0);
-    let desc = Math.max(0, Number(pdvDesconto) || 0);
-    desc = Math.min(desc, subtotal);
-    
+    const subtotal = carrinho.reduce((total, item) => total + Number(item.venda) * item.qtd, 0);
+    const custoTotal = carrinho.reduce((total, item) => total + Number(item.custo) * item.qtd, 0);
+    const desconto = Math.min(Math.max(0, Number(pdvDesconto) || 0), subtotal);
+
     vendaEmProcessamento.current = true;
     setFinalizandoVenda(true);
+
     try {
       if (comoOrcamento) {
-         if(!pdvCliente) return alert("Selecione um cliente para salvar o orçamento!");
-         await push(ref(db, `empresas/${empresaId}/orcamentos`), {
-            cliId: pdvCliente, subtotal, desconto: desc, total: subtotal - desc,
-            itens: carrinho.map(c => ({ id: c.id, marca: c.marca, modelo: c.modelo, qtd: c.qtd, venda: c.venda })),
-            data: new Date().toISOString(), status: 'pendente'
-         });
+        if (!pdvCliente) return alert('Selecione um cliente para salvar o orçamento!');
+        await push(ref(db, 'orcamentos'), {
+          cliId: pdvCliente,
+          subtotal,
+          desconto,
+          total: subtotal - desconto,
+          itens: carrinho.map(item => ({ id: item.id, marca: item.marca, modelo: item.modelo, qtd: item.qtd, venda: item.venda })),
+          data: new Date().toISOString(),
+          status: 'pendente'
+        });
       } else {
-          const empresa = requireEmpresa();
-          const itensAtualizados = await Promise.all(carrinho.map(async (item) => {
-            const snapshot = await get(ref(db, `empresas/${empresa}/produtos/${item.id}`));
-            if (!snapshot.exists()) throw new Error(`O produto ${item.marca} ${item.modelo} não existe mais.`);
-            const produto = snapshot.val();
-            const venda = Number(produto.venda);
-            const custo = Number(produto.custo);
-            if (!Number.isFinite(venda) || venda < 0 || !Number.isFinite(custo) || custo < 0) throw new Error('Existe um produto com valores inválidos.');
-            return { item, venda, custo, codigo: String(produto.codigo || ''), marca: String(produto.marca || ''), modelo: String(produto.modelo || '') };
-          }));
-          const itensVenda = itensAtualizados.map(({ item, venda, custo, codigo, marca, modelo }) => ({ id: item.id, codigo, marca, modelo, qtd: item.qtd, venda, custo }));
-          const subtotalAtualizado = itensVenda.reduce((total, item) => total + item.venda * item.qtd, 0);
-          const descontoAtualizado = Math.min(Math.max(0, Number(pdvDesconto) || 0), subtotalAtualizado);
-          const reservados: typeof itensVenda = [];
-          try {
-            for (const item of itensVenda) {
-              const resultado = await runTransaction(ref(db, `empresas/${empresa}/produtos/${item.id}/qtd`), (estoqueAtual) => {
-                const estoque = Number(estoqueAtual);
-                if (!Number.isFinite(estoque) || estoque < item.qtd) return;
-                return estoque - item.qtd;
-              });
-              if (!resultado.committed) throw new Error(`Estoque insuficiente para ${item.marca || item.id}.`);
-              reservados.push(item);
-            }
-            await update(push(ref(db, `empresas/${empresa}/vendas`)), {
-              cliId: pdvCliente,
-              pag: pdvPagamento,
-              subtotal: subtotalAtualizado,
-              desconto: descontoAtualizado,
-              total: subtotalAtualizado - descontoAtualizado,
-              custoBase: reservados.reduce((total, item) => total + item.custo * item.qtd, 0),
-              itens: reservados.length,
-              itensDetalhados: reservados,
-              data: new Date().toISOString(),
-              caixaId: caixaAberto?.id,
-              criadoPor: user?.uid
+        const itemsAtualizados = await Promise.all(carrinho.map(async (item) => {
+          const snapshot = await get(ref(db, `produtos/${item.id}`));
+          if (!snapshot.exists()) throw new Error(`O produto ${item.marca} ${item.modelo} não existe mais.`);
+          const produto = snapshot.val();
+          const venda = Number(produto.venda);
+          const custo = Number(produto.custo);
+          if (!Number.isFinite(venda) || venda < 0 || !Number.isFinite(custo) || custo < 0) throw new Error('Existe um produto com valores inválidos.');
+          return { item, venda, custo, codigo: String(produto.codigo || ''), marca: String(produto.marca || ''), modelo: String(produto.modelo || '') };
+        }));
+
+        const itensVenda = itemsAtualizados.map(({ item, venda, custo, codigo, marca, modelo }) => ({ id: item.id, codigo, marca, modelo, qtd: item.qtd, venda, custo }));
+        const subtotalAtualizado = itensVenda.reduce((total, item) => total + Number(item.venda) * Number(item.qtd), 0);
+        const descontoAtualizado = Math.min(Math.max(0, Number(pdvDesconto) || 0), subtotalAtualizado);
+        const reservados: typeof itensVenda = [];
+
+        try {
+          for (const item of itensVenda) {
+            const result = await runTransaction(ref(db, `produtos/${item.id}/qtd`), (estoqueAtual) => {
+              const estoque = Number(estoqueAtual);
+              if (!Number.isFinite(estoque) || estoque < item.qtd) return;
+              return estoque - item.qtd;
             });
-          } catch (error) {
-            await Promise.all(reservados.map(item => runTransaction(ref(db, `empresas/${empresa}/produtos/${item.id}/qtd`), (estoqueAtual) => Number(estoqueAtual || 0) + item.qtd)));
-            throw error;
+            if (!result.committed) throw new Error(`Estoque insuficiente para ${item.marca || item.id}.`);
+            reservados.push(item);
           }
+
+          await update(push(ref(db, 'vendas')), {
+            cliId: pdvCliente,
+            pag: pdvPagamento,
+            subtotal: subtotalAtualizado,
+            desconto: descontoAtualizado,
+            total: subtotalAtualizado - descontoAtualizado,
+            custoBase: reservados.reduce((total, item) => total + Number(item.custo) * Number(item.qtd), 0),
+            itens: reservados.length,
+            itensDetalhados: reservados,
+            data: new Date().toISOString(),
+            caixaId: caixaAberto?.id,
+            criadoPor: user?.uid
+          });
+        } catch (error) {
+          await Promise.all(reservados.map(item => runTransaction(ref(db, `produtos/${item.id}/qtd`), (estoqueAtual) => Number(estoqueAtual || 0) + item.qtd)));
+          throw error;
+        }
       }
-      setCarrinho([]); setPdvDesconto(0); setPdvCliente('');
-      alert(comoOrcamento ? "Orçamento salvo!" : "Venda concluída com sucesso!");
-    } catch (e: any) {
-      alert("Erro ao finalizar: " + e.message);
+
+      setCarrinho([]);
+      setPdvDesconto(0);
+      setPdvCliente('');
+      alert(comoOrcamento ? 'Orçamento salvo!' : 'Venda concluída com sucesso!');
+    } catch (error: any) {
+      alert(`Erro ao finalizar venda: ${error?.message || 'Não foi possível concluir a operação.'}`);
     } finally {
       vendaEmProcessamento.current = false;
       setFinalizandoVenda(false);
@@ -632,13 +551,52 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const value = {
-    user, loadingAuth, userRole, platformOwner, developerClaimsPending, empresaId, dadosEmpresa, databaseError, configurarOtica, logout,
-    produtos, clientes, vendas, caixas, orcamentos, ordensServico, carrinho,
-    fornecedores, contas, categorias, usuarios,
-    activeTab, setActiveTab, pdvSearch, setPdvSearch, abrirCaixa, fecharCaixa,
-    salvarProduto, excluirProduto, salvarCliente, excluirCliente, salvarCadastro, excluirCadastro, excluirOrcamento, salvarOrdemServico, converterOrcamentoParaOs, registrarLancamentoCaixa,
-    addToCart, removeFromCart, finalizarVenda, finalizandoVenda, getPlatformOverview, listPlatformCompanies, setPlatformCompanyStatus, setPlatformUserStatus,
-    caixaAberto, totalVendasCaixa, pdvCliente, setPdvCliente, pdvDesconto, setPdvDesconto, pdvPagamento, setPdvPagamento
+    user,
+    loadingAuth,
+    userRole,
+    dadosEmpresa,
+    databaseError,
+    configurarOtica,
+    logout,
+    produtos,
+    clientes,
+    vendas,
+    caixas,
+    orcamentos,
+    ordensServico,
+    fornecedores,
+    contas,
+    categorias,
+    usuarios,
+    carrinho,
+    activeTab,
+    setActiveTab,
+    pdvSearch,
+    setPdvSearch,
+    abrirCaixa,
+    fecharCaixa,
+    salvarProduto,
+    excluirProduto,
+    salvarCliente,
+    excluirCliente,
+    salvarCadastro,
+    excluirCadastro,
+    excluirOrcamento,
+    salvarOrdemServico,
+    converterOrcamentoParaOs,
+    registrarLancamentoCaixa,
+    caixaAberto,
+    totalVendasCaixa,
+    addToCart,
+    removeFromCart,
+    finalizarVenda,
+    finalizandoVenda,
+    pdvCliente,
+    setPdvCliente,
+    pdvDesconto,
+    setPdvDesconto,
+    pdvPagamento,
+    setPdvPagamento
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

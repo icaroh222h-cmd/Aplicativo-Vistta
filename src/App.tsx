@@ -17,10 +17,9 @@ const CadastrosGenericosScreen = lazy(() => import('./screens/CadastrosGenericos
 const OrdensServicoScreen = lazy(() => import('./screens/OrdensServicoScreen').then(module => ({ default: module.OrdensServicoScreen })));
 const HelpScreen = lazy(() => import('./screens/HelpScreen').then(module => ({ default: module.HelpScreen })));
 const SetupOticaScreen = lazy(() => import('./screens/SetupOticaScreen').then(module => ({ default: module.SetupOticaScreen })));
-const PlatformAdminScreen = lazy(() => import('./screens/PlatformAdminScreen').then(module => ({ default: module.PlatformAdminScreen })));
 
 function MainLayout() {
-  const { activeTab, user, loadingAuth, setActiveTab, carrinho, userRole, platformOwner, developerClaimsPending, dadosEmpresa, empresaId, databaseError, logout } = useAppContext();
+  const { activeTab, user, loadingAuth, setActiveTab, carrinho, dadosEmpresa, databaseError, logout } = useAppContext();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isDark, setIsDark] = useState(false);
 
@@ -37,7 +36,6 @@ function MainLayout() {
     document.documentElement.classList.toggle('dark', next);
   };
 
-  // Tela de carregamento enquanto o Firebase verifica o login
   if (loadingAuth) {
     return (
       <div className="vistta-loading flex min-h-[100dvh] w-full items-center justify-center overflow-hidden bg-[#f5f6f4] dark:bg-[#171124]">
@@ -58,29 +56,14 @@ function MainLayout() {
     );
   }
 
-  // Redireciona para o Login se não estiver autenticado
   if (!user) {
     return <Suspense fallback={<ScreenLoading />}><AuthScreen /></Suspense>;
   }
 
-  if (developerClaimsPending) {
-    return <DeveloperClaimsPending email={user.email || ''} onLogout={() => void logout()} />;
-  }
-
-  const isAdminPath = window.location.pathname === '/admin' || window.location.pathname === '/developer' || activeTab === 'platform';
-  if (isAdminPath) {
-    return platformOwner ? <Suspense fallback={<ScreenLoading />}><PlatformAdminScreen /></Suspense> : <ForbiddenScreen />;
-  }
-
-  if (platformOwner) {
-    return <Suspense fallback={<ScreenLoading />}><PlatformAdminScreen /></Suspense>;
-  }
-
-  if (!empresaId) {
+  if (!dadosEmpresa) {
     return <Suspense fallback={<ScreenLoading />}><SetupOticaScreen /></Suspense>;
   }
 
-  // Renderiza o Sistema com o Menu Lateral
   return (
     <div className="flex min-h-[100dvh] h-[100dvh] w-full vistta-shell text-slate-900 dark:text-white overflow-hidden">
       <Sidebar />
@@ -89,57 +72,48 @@ function MainLayout() {
         <button onClick={toggleTheme} aria-label={isDark ? 'Ativar tema claro' : 'Ativar tema escuro'} aria-pressed={isDark} className="absolute top-4 right-4 z-40 w-10 h-10 rounded-full bg-white/80 dark:bg-slate-800 border border-[#e7e1ec] dark:border-slate-700 flex items-center justify-center text-slate-500 hover:text-[#6d4aff] shadow-sm backdrop-blur" title="Alternar tema">
           {isDark ? <Sun size={18} /> : <Moon size={18} />}
         </button>
-      <main className="flex-1 overflow-y-auto p-4 pb-5 pt-16 sm:p-10 sm:pt-10 lg:p-12 relative z-10 custom-scrollbar h-full vistta-grid">
-        <Suspense fallback={<ScreenLoading />}>
-        {activeTab === 'dashboard' && <DashboardScreen />}
-        {activeTab === 'vendas' && <PdvScreen />}
-        {activeTab === 'caixa' && <CaixaScreen />}
-        {activeTab === 'estoque' && <EstoqueScreen />}
-        {activeTab === 'clientes' && <ClientesScreen />}
-        {activeTab === 'orcamentos' && <OrcamentosScreen />}
-        {activeTab === 'ordens' && <OrdensServicoScreen />}
-        {activeTab === 'ajuda' && <HelpScreen />}
-        
-        {activeTab === 'financeiro' && <FinanceiroScreen />}
-        {['fornecedores', 'contas', 'categorias', 'usuarios'].includes(activeTab) && (
-          <CadastrosGenericosScreen activeTab={activeTab} />
-        )}
-        </Suspense>
-      </main>
-      <div className="mobile-bottom-nav md:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700 flex items-center z-[55]">
-        <MobileNav icon={Home} label="Início" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-        <MobileNav icon={ShoppingCart} label="PDV" active={activeTab === 'vendas'} onClick={() => setActiveTab('vendas')} badge={carrinho.length} />
-        <MobileNav icon={Boxes} label="Estoque" active={activeTab === 'estoque'} onClick={() => setActiveTab('estoque')} />
-        <MobileNav icon={Users} label="Clientes" active={activeTab === 'clientes'} onClick={() => setActiveTab('clientes')} />
-        <MobileNav icon={Menu} label="Menu" active={mobileMenuOpen} onClick={() => setMobileMenuOpen(!mobileMenuOpen)} />
-      </div>
-      {mobileMenuOpen && <div className="md:hidden fixed inset-0 z-[70] bg-slate-900/60" onClick={() => setMobileMenuOpen(false)}>
-        <div className="absolute right-0 top-0 h-full w-[80%] max-w-[300px] bg-white dark:bg-slate-800 shadow-2xl p-5" onClick={(event) => event.stopPropagation()}>
-          <div className="flex items-center justify-between mb-8">
-            <span className="font-bold truncate text-slate-900 dark:text-white">{dadosEmpresa?.nome || 'Minha Ótica'}</span>
-            <button onClick={() => setMobileMenuOpen(false)} className="text-slate-400">Fechar</button>
-          </div>
-          <div className="space-y-2">
-            {[
-              ...(platformOwner ? [['platform', 'Administração global']] : []),
-              ['caixa', 'Caixa Diário'], ['orcamentos', 'Orçamentos'], ['ordens', 'Ordens de Serviço'], ['categorias', 'Categorias'], ['ajuda', 'Ajuda e Treinamento'],
-              ...(userRole === 'admin' ? [['financeiro', 'Financeiro'], ['contas', 'Contas'], ['fornecedores', 'Fornecedores'], ['usuarios', 'Usuários']] : [])
-            ].map(([tab, label]) => <button key={tab} onClick={() => { if (tab === 'platform') window.history.pushState({}, '', '/admin'); setActiveTab(tab); setMobileMenuOpen(false); }} className="w-full text-left px-4 py-3 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-slate-700">{label}</button>)}
-          </div>
-          <button onClick={() => logout().catch((error) => console.error('Não foi possível sair:', error))} className="mt-6 flex w-full items-center gap-3 border-t border-slate-100 px-4 pt-5 text-left font-bold text-rose-500 dark:border-slate-700"><LogOut size={18} /> Sair da conta</button>
+        <main className="flex-1 overflow-y-auto p-4 pb-5 pt-16 sm:p-10 sm:pt-10 lg:p-12 relative z-10 custom-scrollbar h-full vistta-grid">
+          <Suspense fallback={<ScreenLoading />}>
+            {activeTab === 'dashboard' && <DashboardScreen />}
+            {activeTab === 'vendas' && <PdvScreen />}
+            {activeTab === 'caixa' && <CaixaScreen />}
+            {activeTab === 'estoque' && <EstoqueScreen />}
+            {activeTab === 'clientes' && <ClientesScreen />}
+            {activeTab === 'orcamentos' && <OrcamentosScreen />}
+            {activeTab === 'ordens' && <OrdensServicoScreen />}
+            {activeTab === 'ajuda' && <HelpScreen />}
+            {activeTab === 'financeiro' && <FinanceiroScreen />}
+            {['fornecedores', 'contas', 'categorias', 'usuarios'].includes(activeTab) && (
+              <CadastrosGenericosScreen activeTab={activeTab} />
+            )}
+          </Suspense>
+        </main>
+        <div className="mobile-bottom-nav md:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700 flex items-center z-[55]">
+          <MobileNav icon={Home} label="Início" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
+          <MobileNav icon={ShoppingCart} label="PDV" active={activeTab === 'vendas'} onClick={() => setActiveTab('vendas')} badge={carrinho.length} />
+          <MobileNav icon={Boxes} label="Estoque" active={activeTab === 'estoque'} onClick={() => setActiveTab('estoque')} />
+          <MobileNav icon={Users} label="Clientes" active={activeTab === 'clientes'} onClick={() => setActiveTab('clientes')} />
+          <MobileNav icon={Menu} label="Menu" active={mobileMenuOpen} onClick={() => setMobileMenuOpen(!mobileMenuOpen)} />
         </div>
-      </div>}
+        {mobileMenuOpen && <div className="md:hidden fixed inset-0 z-[70] bg-slate-900/60" onClick={() => setMobileMenuOpen(false)}>
+          <div className="absolute right-0 top-0 h-full w-[80%] max-w-[300px] bg-white dark:bg-slate-800 shadow-2xl p-5" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between mb-8">
+              <span className="font-bold truncate text-slate-900 dark:text-white">{dadosEmpresa?.nome || 'Minha Ótica'}</span>
+              <button onClick={() => setMobileMenuOpen(false)} className="text-slate-400">Fechar</button>
+            </div>
+            <div className="space-y-2">
+              {['caixa', 'orcamentos', 'ordens', 'categorias', 'ajuda'].map(tab => (
+                <button key={tab} onClick={() => { setActiveTab(tab); setMobileMenuOpen(false); }} className="w-full text-left px-4 py-3 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-slate-700">
+                  {tab === 'caixa' ? 'Caixa Diário' : tab === 'orcamentos' ? 'Orçamentos' : tab === 'ordens' ? 'Ordens de Serviço' : tab === 'categorias' ? 'Categorias' : 'Ajuda e Treinamento'}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => logout().catch((error) => console.error('Não foi possível sair:', error))} className="mt-6 flex w-full items-center gap-3 border-t border-slate-100 px-4 pt-5 text-left font-bold text-rose-500 dark:border-slate-700"><LogOut size={18} /> Sair da conta</button>
+          </div>
+        </div>}
       </div>
     </div>
   );
-}
-
-function ForbiddenScreen() {
-  return <div className="vistta-shell flex min-h-[100dvh] items-center justify-center p-6"><div className="max-w-md rounded-3xl border border-[var(--vistta-border)] bg-[var(--vistta-surface)] p-8 text-center shadow-[0_20px_60px_rgba(48,32,77,.1)]"><h1 className="font-display text-2xl font-bold">Acesso não autorizado</h1><p className="mt-3 text-sm leading-6 text-[var(--vistta-secondary)]">Esta área é exclusiva do proprietário da plataforma.</p><a href="/" className="mt-6 inline-flex rounded-xl bg-[var(--vistta-plum)] px-5 py-3 text-sm font-bold text-white hover:bg-[var(--vistta-violet)]">Voltar ao sistema</a></div></div>;
-}
-
-function DeveloperClaimsPending({ email, onLogout }: { email: string; onLogout: () => void }) {
-  return <div className="vistta-shell flex min-h-[100dvh] items-center justify-center p-6"><div className="max-w-lg rounded-3xl border border-[var(--vistta-border)] bg-[var(--vistta-surface)] p-8 text-center shadow-[0_20px_60px_rgba(48,32,77,.1)]"><h1 className="font-display text-2xl font-bold">Acesso do developer pendente</h1><p className="mt-3 text-sm leading-6 text-[var(--vistta-secondary)]">A conta {email} está autenticada, mas ainda não recebeu as Custom Claims do Firebase Admin SDK.</p><p className="mt-3 text-sm leading-6 text-[var(--vistta-secondary)]">Aplique <code>role=developer</code> e <code>platformOwner=true</code> no Firebase e faça logout/login novamente.</p><button type="button" onClick={onLogout} className="mt-6 rounded-xl bg-[var(--vistta-plum)] px-5 py-3 text-sm font-bold text-white">Sair</button></div></div>;
 }
 
 function ScreenLoading() {
