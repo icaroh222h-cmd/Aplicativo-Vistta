@@ -5,6 +5,8 @@ import { createUserWithEmailAndPassword, getAuth, onAuthStateChanged, sendPasswo
 import { db, auth, firebaseConfig } from '../config/firebase';
 import { Produto, Cliente, Venda, Caixa, CarrinhoItem, Orcamento, OrdemServico } from '../types';
 
+const PLATFORM_OWNER_EMAIL = 'icaroprojetos7@gmail.com';
+
 const provisioningApp = getApps().find(currentApp => currentApp.name === 'vistta-user-provisioning') || initializeApp(firebaseConfig, 'vistta-user-provisioning');
 const provisioningAuth = getAuth(provisioningApp);
 const provisioningDb = getDatabase(provisioningApp);
@@ -206,13 +208,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       clearProfileListener();
       if (u) {
         setDatabaseError(null);
-        let claims: Record<string, unknown> = {};
-        try {
-          claims = (await u.getIdTokenResult()).claims;
-        } catch (error) {
-          console.error('Não foi possível validar as permissões da sessão:', error);
-        }
-        const isDeveloper = claims.role === 'developer' || claims.platformOwner === true;
+        const isDeveloper = u.email?.trim().toLowerCase() === PLATFORM_OWNER_EMAIL && u.emailVerified;
         setPlatformOwner(isDeveloper);
         if (isDeveloper) {
           setUser(u);
@@ -454,10 +450,51 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     await update(lancamentoRef, { ...data, data: new Date().toISOString(), operador: user?.uid });
   };
 
-  const getPlatformOverview = async () => { throw new Error('O painel global requer Cloud Functions e o plano Blaze.'); };
-  const listPlatformCompanies = async () => { throw new Error('O painel global requer Cloud Functions e o plano Blaze.'); };
-  const setPlatformCompanyStatus = async () => { throw new Error('A administração global requer Cloud Functions e o plano Blaze.'); };
-  const setPlatformUserStatus = async () => { throw new Error('A administração global requer Cloud Functions e o plano Blaze.'); };
+  const requirePlatformOwner = () => {
+    if (!platformOwner || user?.email?.trim().toLowerCase() !== PLATFORM_OWNER_EMAIL || !user.emailVerified) {
+      throw new Error('Acesso restrito ao proprietário autorizado da plataforma.');
+    }
+  };
+
+  const getPlatformOverview = async () => {
+    requirePlatformOwner();
+    const [usersSnapshot, companiesSnapshot] = await Promise.all([get(ref(db, 'users')), get(ref(db, 'empresas'))]);
+    const users = usersSnapshot.val() && typeof usersSnapshot.val() === 'object' ? Object.entries(usersSnapshot.val() as Record<string, any>) : [];
+    const companies = companiesSnapshot.val() && typeof companiesSnapshot.val() === 'object' ? Object.entries(companiesSnapshot.val() as Record<string, any>) : [];
+    const isActive = (value: any) => !['blocked', 'suspended', 'inactive'].includes(String(value?.status || '').toLowerCase());
+    const createdAt = (value: any) => Date.parse(value?.createdAt || value?.criadoEm || '') || 0;
+    const newSince = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    return { data: {
+      generatedAt: new Date().toISOString(),
+      users: { total: users.length, active: users.filter(([, value]) => isActive(value)).length, blocked: users.filter(([, value]) => !isActive(value)).length, newLast30Days: users.filter(([, value]) => createdAt(value) >= newSince).length },
+      companies: { total: companies.length, active: companies.filter(([, value]) => isActive(value?.info)).length, blocked: companies.filter(([, value]) => !isActive(value?.info)).length, newLast30Days: companies.filter(([, value]) => createdAt(value?.info) >= newSince).length },
+      recentLogins: [], recentActivity: [], security: { mfa: 'not_configured', suspiciousAttempts: 'not_collected' },
+      billing: { configured: false, message: 'Nenhuma integração de planos ou pagamentos foi configurada.' }
+    } };
+  };
+
+  const listPlatformCompanies = async () => {
+    requirePlatformOwner();
+    const [companiesSnapshot, usersSnapshot] = await Promise.all([get(ref(db, 'empresas')), get(ref(db, 'users'))]);
+    const companies = companiesSnapshot.val() && typeof companiesSnapshot.val() === 'object' ? companiesSnapshot.val() as Record<string, any> : {};
+    const users = usersSnapshot.val() && typeof usersSnapshot.val() === 'object' ? Object.values(usersSnapshot.val() as Record<string, any>) : [];
+    return { data: { companies: Object.entries(companies).map(([companyId, value]) => ({ companyId, info: value?.info || {}, userCount: users.filter((item: any) => item.empresaId === companyId).length })) } };
+  };
+
+  const setPlatformCompanyStatus = async (companyId: string, status: 'active' | 'blocked') => {
+    requirePlatformOwner();
+    if (!companyId || !['active', 'blocked'].includes(status)) throw new Error('Empresa ou status inválido.');
+    await update(ref(db, `empresas/${companyId}/info`), { status, updatedAt: new Date().toISOString(), updatedBy: user?.uid });
+  };
+
+  const setPlatformUserStatus = async (uid: string, status: 'active' | 'blocked') => {
+    requirePlatformOwner();
+    const ownerUid = user?.uid;
+    if (!uid || !['active', 'blocked'].includes(status)) throw new Error('Usuário ou status inválido.');
+    if (!ownerUid) throw new Error('Sessão do proprietário não encontrada.');
+    if (uid === ownerUid) throw new Error('O proprietário não pode bloquear a própria conta.');
+    await update(ref(db, `users/${uid}`), { status, updatedAt: new Date().toISOString(), updatedBy: ownerUid });
+  };
 
   const finalizarVenda = async (comoOrcamento = false) => {
     if (vendaEmProcessamento.current) return;
