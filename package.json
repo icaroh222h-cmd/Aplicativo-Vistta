@@ -9,6 +9,8 @@
     "build:functions": "npm run build --prefix functions",
     "build:all": "npm run build:functions && npm run build",
     "deploy:hosting": "npm run build && npx firebase-tools deploy --only hosting",
+    "deploy:functions": "npm run build:functions && npx firebase-tools deploy --only functions",
+    "deploy:all": "npm run build:all && npx firebase-tools deploy --only hosting,functions,database",
     "preview": "vite preview"
   },
   "dependencies": {

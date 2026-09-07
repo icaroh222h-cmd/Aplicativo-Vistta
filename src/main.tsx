@@ -23,7 +23,7 @@ function MissingFirebaseConfig() {
         <p className="mb-3 text-xs font-bold uppercase tracking-[.2em] text-[#6d4aff]">VISTTA ERP</p>
         <h1 className="mb-3 text-2xl font-bold">Configuração do Firebase pendente</h1>
         <p className="mb-6 text-sm leading-6 text-slate-600">
-          O deploy foi carregado, mas as variáveis do Firebase ainda não foram cadastradas no ambiente da Vercel.
+          O app foi carregado, mas as variáveis do Firebase ainda não foram cadastradas no ambiente de execução.
         </p>
         <div className="rounded-2xl bg-slate-50 p-4 text-left">
           <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Variáveis ausentes</p>
@@ -32,7 +32,7 @@ function MissingFirebaseConfig() {
           </ul>
         </div>
         <p className="mt-6 text-xs leading-5 text-slate-500">
-          Na Vercel, abra Settings → Environment Variables, adicione os valores do app Web Firebase e faça um novo deploy.
+          No Firebase Console, abra as configurações do projeto, adicione os valores do app Web Firebase e faça novo deploy do Hosting.
         </p>
       </section>
     </main>
