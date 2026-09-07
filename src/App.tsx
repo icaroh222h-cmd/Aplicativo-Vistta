@@ -20,7 +20,7 @@ const SetupOticaScreen = lazy(() => import('./screens/SetupOticaScreen').then(mo
 const PlatformAdminScreen = lazy(() => import('./screens/PlatformAdminScreen').then(module => ({ default: module.PlatformAdminScreen })));
 
 function MainLayout() {
-  const { activeTab, user, loadingAuth, setActiveTab, carrinho, userRole, platformOwner, dadosEmpresa, empresaId, databaseError, logout } = useAppContext();
+  const { activeTab, user, loadingAuth, setActiveTab, carrinho, userRole, platformOwner, developerClaimsPending, dadosEmpresa, empresaId, databaseError, logout } = useAppContext();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isDark, setIsDark] = useState(false);
 
@@ -61,6 +61,10 @@ function MainLayout() {
   // Redireciona para o Login se não estiver autenticado
   if (!user) {
     return <Suspense fallback={<ScreenLoading />}><AuthScreen /></Suspense>;
+  }
+
+  if (developerClaimsPending) {
+    return <DeveloperClaimsPending email={user.email || ''} onLogout={() => void logout()} />;
   }
 
   const isAdminPath = window.location.pathname === '/admin' || window.location.pathname === '/developer' || activeTab === 'platform';
@@ -132,6 +136,10 @@ function MainLayout() {
 
 function ForbiddenScreen() {
   return <div className="vistta-shell flex min-h-[100dvh] items-center justify-center p-6"><div className="max-w-md rounded-3xl border border-[var(--vistta-border)] bg-[var(--vistta-surface)] p-8 text-center shadow-[0_20px_60px_rgba(48,32,77,.1)]"><h1 className="font-display text-2xl font-bold">Acesso não autorizado</h1><p className="mt-3 text-sm leading-6 text-[var(--vistta-secondary)]">Esta área é exclusiva do proprietário da plataforma.</p><a href="/" className="mt-6 inline-flex rounded-xl bg-[var(--vistta-plum)] px-5 py-3 text-sm font-bold text-white hover:bg-[var(--vistta-violet)]">Voltar ao sistema</a></div></div>;
+}
+
+function DeveloperClaimsPending({ email, onLogout }: { email: string; onLogout: () => void }) {
+  return <div className="vistta-shell flex min-h-[100dvh] items-center justify-center p-6"><div className="max-w-lg rounded-3xl border border-[var(--vistta-border)] bg-[var(--vistta-surface)] p-8 text-center shadow-[0_20px_60px_rgba(48,32,77,.1)]"><h1 className="font-display text-2xl font-bold">Acesso do developer pendente</h1><p className="mt-3 text-sm leading-6 text-[var(--vistta-secondary)]">A conta {email} está autenticada, mas ainda não recebeu as Custom Claims do Firebase Admin SDK.</p><p className="mt-3 text-sm leading-6 text-[var(--vistta-secondary)]">Aplique <code>role=developer</code> e <code>platformOwner=true</code> no Firebase e faça logout/login novamente.</p><button type="button" onClick={onLogout} className="mt-6 rounded-xl bg-[var(--vistta-plum)] px-5 py-3 text-sm font-bold text-white">Sair</button></div></div>;
 }
 
 function ScreenLoading() {

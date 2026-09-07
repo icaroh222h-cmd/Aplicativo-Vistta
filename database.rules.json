@@ -3,14 +3,14 @@
     ".read": false,
     ".write": false,
     "platformAudit": {
-      ".read": "auth != null && auth.token.email == 'icaroprojetos7@gmail.com' && auth.token.email_verified == true",
+      ".read": "auth != null && auth.token.role == 'developer' && auth.token.platformOwner == true",
       ".write": false
     },
     "users": {
       ".read": "auth != null && auth.token.role == 'developer' && auth.token.platformOwner == true",
       "$uid": {
-        ".read": "auth != null && ((auth.uid == $uid && data.child('status').val() != 'blocked') || (auth.token.email == 'icaroprojetos7@gmail.com' && auth.token.email_verified == true))",
-        ".write": "auth != null && ((auth.uid == $uid && ((!data.exists() && newData.child('role').val() == 'admin' && !newData.child('empresaId').exists()) || (!data.exists() && newData.child('empresaId').exists() && (newData.child('role').val() == 'manager' || newData.child('role').val() == 'user') && newData.child('convidadoPor').exists() && root.child('users').child(newData.child('convidadoPor').val()).child('role').val() == 'admin' && root.child('users').child(newData.child('convidadoPor').val()).child('empresaId').val() == newData.child('empresaId').val()) || (data.exists() && !data.child('empresaId').exists() && newData.child('empresaId').exists() && newData.child('role').val() == 'admin' && data.child('role').val() == 'admin' && root.child('empresas').child(newData.child('empresaId').val()).child('info').child('criadoPor').val() == auth.uid))) || (auth.token.email == 'icaroprojetos7@gmail.com' && auth.token.email_verified == true))",
+        ".read": "auth != null && ((auth.uid == $uid && data.child('status').val() != 'blocked') || (auth.token.role == 'developer' && auth.token.platformOwner == true))",
+        ".write": "auth != null && ((auth.uid == $uid && ((!data.exists() && newData.child('role').val() == 'admin' && !newData.child('empresaId').exists()) || (!data.exists() && newData.child('empresaId').exists() && (newData.child('role').val() == 'manager' || newData.child('role').val() == 'user') && newData.child('convidadoPor').exists() && root.child('users').child(newData.child('convidadoPor').val()).child('role').val() == 'admin' && root.child('users').child(newData.child('convidadoPor').val()).child('empresaId').val() == newData.child('empresaId').val()) || (data.exists() && !data.child('empresaId').exists() && newData.child('empresaId').exists() && newData.child('role').val() == 'admin' && data.child('role').val() == 'admin' && root.child('empresas').child(newData.child('empresaId').val()).child('info').child('criadoPor').val() == auth.uid))) || (auth.token.role == 'developer' && auth.token.platformOwner == true))",
         ".validate": "newData.hasChildren(['role']) && (newData.child('role').val() == 'admin' || newData.child('role').val() == 'manager' || newData.child('role').val() == 'user')"
       }
     },

@@ -27,6 +27,7 @@ interface AppContextType {
   loadingAuth: boolean;
   userRole: string | null;
   platformOwner: boolean;
+  developerClaimsPending: boolean;
   empresaId: string | null;
   dadosEmpresa: { nome?: string } | null;
   databaseError: string | null;
@@ -90,6 +91,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [userRole, setUserRole] = useState<string | null>(null);
   const [platformOwner, setPlatformOwner] = useState(false);
+  const [developerClaimsPending, setDeveloperClaimsPending] = useState(false);
   const [empresaId, setEmpresaId] = useState<string | null>(null);
   const [dadosEmpresa, setDadosEmpresa] = useState<{ nome?: string } | null>(null);
   const [databaseError, setDatabaseError] = useState<string | null>(null);
@@ -114,6 +116,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [pdvDesconto, setPdvDesconto] = useState(0);
   const [finalizandoVenda, setFinalizandoVenda] = useState(false);
   const vendaEmProcessamento = useRef(false);
+  const perfilEmProvisionamento = useRef<string | null>(null);
 
   const caixaAberto = useMemo(() => caixas.find(c => c.status === 'aberto'), [caixas]);
   const vendasDoCaixa = useMemo(() => caixaAberto ? vendas.filter(v => v.caixaId === caixaAberto.id) : [], [vendas, caixaAberto]);
@@ -218,7 +221,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           console.error('[Auth] Falha ao renovar claims do usuário:', { uid: u.uid, email: u.email, error });
         }
         const isDeveloper = claims.role === 'developer' && claims.platformOwner === true;
-        if (u.email?.trim().toLowerCase() === PLATFORM_OWNER_EMAIL && !isDeveloper) {
+        const isOwnerAccount = u.email?.trim().toLowerCase() === PLATFORM_OWNER_EMAIL;
+        setDeveloperClaimsPending(isOwnerAccount && !isDeveloper);
+        if (isOwnerAccount && !isDeveloper) {
           console.error('[Auth] Conta developer sem custom claims válidas:', { uid: u.uid, email: u.email, claims: Object.keys(claims) });
         }
         setPlatformOwner(isDeveloper);
@@ -227,6 +232,35 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           setUserRole('developer');
           setEmpresaId(null);
           setDadosEmpresa(null);
+          setLoadingAuth(false);
+          return;
+        }
+        const profileRef = ref(db, `users/${u.uid}`);
+        try {
+          const profileSnapshot = await get(profileRef);
+          if (!profileSnapshot.exists() && perfilEmProvisionamento.current !== u.uid) {
+            perfilEmProvisionamento.current = u.uid;
+            await update(profileRef, {
+              role: 'admin',
+              status: 'active',
+              email: u.email || '',
+              nome: u.displayName || '',
+              createdAt: new Date().toISOString()
+            });
+          }
+        } catch (error: any) {
+          console.error('[Auth] Falha ao criar/recuperar perfil:', {
+            operation: 'get/update',
+            path: `users/${u.uid}`,
+            uid: u.uid,
+            email: u.email,
+            code: error?.code,
+            message: error?.message
+          });
+          setDatabaseError(`Não foi possível criar o perfil do usuário. Código: ${error?.code || 'unknown'}. ${error?.message || ''}`);
+          setUser(null);
+          setEmpresaId(null);
+          setUserRole(null);
           setLoadingAuth(false);
           return;
         }
@@ -240,7 +274,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         }, 10000);
 
         unsubscribeProfile = onValue(
-          ref(db, `users/${u.uid}`),
+          profileRef,
           (snap) => {
             if (!snap.exists()) return;
             const data = snap.val();
@@ -272,6 +306,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           }
         );
       } else {
+        perfilEmProvisionamento.current = null;
+        setDeveloperClaimsPending(false);
         setUser(null);
         setEmpresaId(null);
         setUserRole(null);
@@ -596,7 +632,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const value = {
-    user, loadingAuth, userRole, platformOwner, empresaId, dadosEmpresa, databaseError, configurarOtica, logout,
+    user, loadingAuth, userRole, platformOwner, developerClaimsPending, empresaId, dadosEmpresa, databaseError, configurarOtica, logout,
     produtos, clientes, vendas, caixas, orcamentos, ordensServico, carrinho,
     fornecedores, contas, categorias, usuarios,
     activeTab, setActiveTab, pdvSearch, setPdvSearch, abrirCaixa, fecharCaixa,

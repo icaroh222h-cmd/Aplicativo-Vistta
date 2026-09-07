@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithRedirect, getRedirectResult, GoogleAuthProvider, sendPasswordResetEmail, verifyPasswordResetCode, confirmPasswordReset, User } from 'firebase/auth';
-import { ref, update, get } from 'firebase/database';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithRedirect, getRedirectResult, GoogleAuthProvider, sendPasswordResetEmail, verifyPasswordResetCode, confirmPasswordReset } from 'firebase/auth';
+import { ref, update } from 'firebase/database';
 import { auth, db } from '../config/firebase';
 import { trackEvent } from '../services/telemetry';
 import { Mail, Lock, EyeOff, Eye, Store, Package, BarChart3, ShieldCheck, Instagram, Linkedin, ArrowUpRight, CheckCircle2 } from 'lucide-react';
@@ -20,14 +20,6 @@ export function AuthScreen() {
   const [accountExists, setAccountExists] = useState(false);
   const [resetCode, setResetCode] = useState('');
 
-  const createGoogleProfile = async (googleUser: User) => {
-    const userRef = ref(db, `users/${googleUser.uid}`);
-    const snapshot = await get(userRef);
-    if (!snapshot.exists()) {
-      await update(userRef, { role: 'admin', status: 'active', email: googleUser.email || '', nome: googleUser.displayName || '', createdAt: new Date().toISOString() });
-    }
-  };
-
   useEffect(() => {
     let ativo = true;
     const processarRedirect = async () => {
@@ -35,7 +27,6 @@ export function AuthScreen() {
         const result = await getRedirectResult(auth);
         if (!result || !ativo) return;
         setIsLoggingIn(true);
-        await createGoogleProfile(result.user);
         void trackEvent('login_google');
       } catch (error: any) {
         if (ativo) setAuthError(getGoogleErrorMessage(error));
